@@ -463,7 +463,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 0;
   user-select: none;
   overflow: hidden;
   padding: 0;
@@ -485,6 +485,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   width: auto;
   border-radius: 20px;
   padding: 0 16px;
+  gap: 8px;
 }
 
 .btn-camera-cycle .cam-icon {
