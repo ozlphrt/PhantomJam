@@ -156,6 +156,7 @@ const cameraLabels = {
 
 const cameraCycleBtn = document.getElementById('camera-cycle-btn');
 const camActiveName = document.getElementById('cam-active-name');
+let camLabelTimeout = null;
 
 if (cameraCycleBtn) {
   cameraCycleBtn.addEventListener('click', () => {
@@ -167,6 +168,17 @@ if (cameraCycleBtn) {
     renderer3d.setCameraPreset(nextMode, vehicles);
     if (camActiveName) {
       camActiveName.textContent = cameraLabels[nextMode];
+      
+      // Expand capsule to show the name
+      cameraCycleBtn.classList.add('expanded');
+      
+      // Reset previous auto-collapse timeout
+      if (camLabelTimeout) clearTimeout(camLabelTimeout);
+      
+      // Collapse back into a circle after 2 seconds
+      camLabelTimeout = setTimeout(() => {
+        cameraCycleBtn.classList.remove('expanded');
+      }, 2000);
     }
   });
 }
