@@ -219,7 +219,7 @@ document.addEventListener('mousemove', e => {
   }
 });
 
-// Auto-collapse after 2.5s on initial startup so the user is introduced to controls first
-hideTimeout = setTimeout(hideSidebar, 2500);
+// Start with the sidebar collapsed on initial startup
+hideSidebar();
 
 requestAnimationFrame(tick);
