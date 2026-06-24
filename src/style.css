@@ -437,16 +437,16 @@ input[type="range"]::-webkit-slider-thumb:hover {
     font-size: 16px;
   }
   #sidebar:not(.collapsed) ~ .btn-camera-cycle {
-    right: 20px;
-    bottom: 340px; /* shift up on mobile to avoid overlapping sidebar */
+    right: 15px;
+    top: 63px;
   }
 }
 
 /* ── Floating Camera Cycle Button ── */
 .btn-camera-cycle {
   position: absolute;
-  bottom: 24px;
-  right: 24px;
+  top: 72px; /* positioned below the settings cog (top: 20px + height: 42px + 10px gap) */
+  right: 20px;
   background: rgba(25, 25, 34, 0.85);
   color: var(--text);
   border: 1px solid var(--border);
@@ -459,7 +459,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   z-index: 90;
   backdrop-filter: blur(8px);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-  transition: all 0.25s ease, right 0.45s cubic-bezier(0.25, 1, 0.5, 1), bottom 0.45s cubic-bezier(0.25, 1, 0.5, 1);
+  transition: all 0.25s ease, right 0.45s cubic-bezier(0.25, 1, 0.5, 1), top 0.45s cubic-bezier(0.25, 1, 0.5, 1);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -479,7 +479,8 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 /* Shift left when sidebar is open */
 #sidebar:not(.collapsed) ~ .btn-camera-cycle {
-  right: 344px; /* 320px sidebar + 24px gap */
+  right: 340px; /* 320px sidebar + 20px gap */
 }
+
 
 
