@@ -111,8 +111,10 @@ export function createVehicles(count, totalLength, params) {
         isTruck: type === 'truck', // legacy compatibility
         perturbTimer: -1,       // -1 = no pending perturbation
         lateralNoise: type === 'motorcycle'
-          ? (Math.random() - 0.5) * 1.6  // motorcycles drift up to 0.8m left/right
-          : (Math.random() - 0.5) * 0.8, // other vehicles drift up to 0.4m
+          ? (Math.random() - 0.5) * 2.6  // motorcycles drift up to 1.3m left/right
+          : (Math.random() - 0.5) * 1.6, // other vehicles drift up to 0.8m
+        weavePhase: Math.random() * Math.PI * 2,
+        weaveSpeed: 0.5 + Math.random() * 0.8,
       });
     }
   }

@@ -265,7 +265,13 @@ export class Renderer3D {
       const laneWidth = 4.5;
       const visualLane = car.visualLane !== undefined ? car.visualLane : car.lane;
       const latNoise = car.lateralNoise !== undefined ? car.lateralNoise : 0;
-      const offset = (visualLane - 2) * laneWidth + latNoise;
+      
+      // Dynamic slow-weaving to represent micro-steering adjustments
+      const weaveSpeed = car.weaveSpeed !== undefined ? car.weaveSpeed : 0.8;
+      const weavePhase = car.weavePhase !== undefined ? car.weavePhase : 0;
+      const weave = Math.sin((Date.now() / 1000) * weaveSpeed + weavePhase) * 0.18; // 18cm maximum sway
+      
+      const offset = (visualLane - 2) * laneWidth + latNoise + weave;
 
       // Normal to road surface: cross product of tangent and world-up approximation
       // Road tangent in world space: (tx, tz, ty) because renderer maps y→z
