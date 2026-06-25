@@ -186,12 +186,11 @@ html, body {
   height: 42px;
   border-radius: 50%; /* circular trigger button */
   font-family: var(--font);
-  font-size: 18px; /* larger emoji/icon size */
   cursor: pointer;
   z-index: 90;
   backdrop-filter: blur(8px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-  transition: all 0.25s ease, opacity 0.25s ease;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  transition: all 0.25s ease, opacity 0.25s ease, right 0.45s cubic-bezier(0.25, 1, 0.5, 1);
   display: flex;
   align-items: center;
   justify-content: center; /* center the gear icon */
@@ -199,10 +198,23 @@ html, body {
   pointer-events: none;
 }
 
+.btn-sidebar-trigger svg {
+  width: 18px;
+  height: 18px;
+  stroke: var(--text);
+  flex-shrink: 0;
+  display: block;
+}
+
 .btn-sidebar-trigger:hover {
   background: rgba(36, 36, 48, 0.95);
   border-color: var(--accent);
-  box-shadow: 0 4px 16px rgba(91, 141, 238, 0.3);
+  box-shadow: 0 4px 20px rgba(91, 141, 238, 0.4);
+  transform: translateY(-2px);
+}
+
+.btn-sidebar-trigger:active {
+  transform: translateY(0);
 }
 
 /* ── Panel ── */
@@ -434,7 +446,20 @@ input[type="range"]::-webkit-slider-thumb:hover {
     right: 15px;
     width: 38px;
     height: 38px;
-    font-size: 16px;
+  }
+  .btn-sidebar-trigger svg {
+    width: 16px;
+    height: 16px;
+  }
+  .btn-camera-cycle {
+    top: 63px;
+    right: 15px;
+    width: 38px;
+    height: 38px;
+  }
+  .btn-camera-cycle svg {
+    width: 16px;
+    height: 16px;
   }
   #sidebar:not(.collapsed) ~ .btn-camera-cycle {
     right: 15px;
