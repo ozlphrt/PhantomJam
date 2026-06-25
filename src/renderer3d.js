@@ -264,7 +264,8 @@ export class Renderer3D {
       const pt = getPointAtS(road, car.s);
       const laneWidth = 4.5;
       const visualLane = car.visualLane !== undefined ? car.visualLane : car.lane;
-      const offset = (visualLane - 2) * laneWidth;
+      const latNoise = car.lateralNoise !== undefined ? car.lateralNoise : 0;
+      const offset = (visualLane - 2) * laneWidth + latNoise;
 
       // Normal to road surface: cross product of tangent and world-up approximation
       // Road tangent in world space: (tx, tz, ty) because renderer maps y→z
