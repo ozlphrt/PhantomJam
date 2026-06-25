@@ -156,8 +156,9 @@ export function stepVehicles(vehicles, params, road, dt) {
   for (const ego of vehicles) {
     if (ego.visualLane === undefined) ego.visualLane = ego.lane;
 
-    // Check lane change with 15% chance per physics step to keep simulation performant and realistic
-    if (Math.random() > 0.15) continue;
+    // Check lane change with higher frequency when slow (up to 35% when stuck in traffic)
+    const checkRate = ego.v < 5.0 ? 0.35 : 0.15;
+    if (Math.random() > checkRate) continue;
 
     const currentLane = ego.lane;
 
@@ -213,8 +214,9 @@ export function stepVehicles(vehicles, params, road, dt) {
         followGap = minFollowerGap - (targetFollower.length / 2) - (ego.length / 2);
       }
 
-      const minSafeLeadGap = 3.0 + ego.v * 0.10;
-      const minSafeFollowGap = 4.5 + (targetFollower ? targetFollower.v : 0) * 0.15;
+      // Squeeze into tighter gaps at low speeds (dynamic driver tailgating margin)
+      const minSafeLeadGap = 2.0 + ego.v * 0.08;
+      const minSafeFollowGap = 3.0 + (targetFollower ? targetFollower.v : 0) * 0.10;
 
       if (leadGap < minSafeLeadGap || followGap < minSafeFollowGap) continue;
 
@@ -228,8 +230,8 @@ export function stepVehicles(vehicles, params, road, dt) {
       if (!targetLeader) {
         targetLaneBetter = true; // empty target lane is always better
       } else {
-        // Target lane is better if leader is further away AND moving faster than our current leader
-        targetLaneBetter = (leadGap > currentGap + 8.0) && (targetLeader.v > currentLeader.v + 1.5);
+        // Reduced gap advantage (3.0m instead of 8.0m) and lower speed advantage (0.5m/s instead of 1.5m/s)
+        targetLaneBetter = (leadGap > currentGap + 3.0) && (targetLeader.v > currentLeader.v + 0.5);
       }
 
       if (targetLaneBetter) {
