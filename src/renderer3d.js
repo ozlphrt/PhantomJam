@@ -269,7 +269,7 @@ export class Renderer3D {
       // Dynamic slow-weaving to represent micro-steering adjustments
       const weaveSpeed = car.weaveSpeed !== undefined ? car.weaveSpeed : 0.8;
       const weavePhase = car.weavePhase !== undefined ? car.weavePhase : 0;
-      const weave = Math.sin((Date.now() / 1000) * weaveSpeed + weavePhase) * 0.18; // 18cm maximum sway
+      const weave = Math.sin((Date.now() / 1000) * weaveSpeed + weavePhase) * 0.35; // 35cm maximum sway
       
       const offset = (visualLane - 2) * laneWidth + latNoise + weave;
 
