@@ -17,9 +17,9 @@
 
 export const DEFAULT_PARAMS = {
   v0:    30,    // desired speed m/s (~108 km/h)
-  aMax:  0.73,  // max acceleration — Treiber 2000 original value
-  b:     1.67,  // comfortable decel — Treiber 2000 original value
-  T:     1.6,   // safe time headway (s)
+  aMax:  2.0,   // max acceleration (was 0.73) - faster jam dissolution
+  b:     3.0,   // comfortable decel (was 1.67) - sharper braking triggers jams faster
+  T:     1.0,   // safe time headway in seconds (was 1.6) - quicker driver reaction
   s0:    2.0,   // min bumper-to-bumper gap (m)
   delta: 4,
   vehicleLen:    4.5,
@@ -284,7 +284,7 @@ export function stepVehicles(vehicles, params, road, dt) {
       car.perturbTimer -= dt;
       // Active braking window: from timer value 1.2 down to 0
       if (car.perturbTimer <= 1.2) {
-        nextA[car.id] = -5.0; // hard emergency brake — creates a sharp shockwave
+        nextA[car.id] = -7.0; // hard emergency brake (was -5.0) — creates a sharp shockwave instantly
       }
     }
   }
