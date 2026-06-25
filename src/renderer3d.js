@@ -62,6 +62,7 @@ export class Renderer3D {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.05;
+    this.controls.minPolarAngle = Math.PI / 3; // restrict camera from getting too vertical (max 60 deg from vertical)
     this.controls.maxPolarAngle = Math.PI / 2 + 0.05; // allow looking slightly upwards
     this.controls.minDistance = 20;
     this.controls.maxDistance = 600;
@@ -427,14 +428,17 @@ export class Renderer3D {
     this.cameraVelocity.set(0, 0, 0);
 
     if (mode === 'default') {
+      this.controls.minPolarAngle = Math.PI / 3;
       this.controls.autoRotate = true;
       this.camera.position.set(-230, 90, 100);
       this.controls.target.set(0, 5, 0);
     } else if (mode === 'top') {
+      this.controls.minPolarAngle = 0; // allow top-down camera view to bypass constraint
       this.controls.autoRotate = false;
       this.camera.position.set(0, 260, 0.01);
       this.controls.target.set(0, 0, 0);
     } else if (mode === 'jam') {
+      this.controls.minPolarAngle = Math.PI / 3;
       this.controls.autoRotate = false;
       // Trigger initial update
       this._updateTracking(vehicles);
