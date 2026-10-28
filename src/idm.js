@@ -16,25 +16,32 @@
  */
 
 export const DEFAULT_PARAMS = {
-  v0:    28,    // desired speed m/s (~100 km/h)
-  aMax:  0.75,  // Treiber (2000) low max acceleration — amplifies stop-and-go phantom waves
-  b:     2.0,   // comfortable deceleration (m/s²)
-  T:     0.75,  // safe time headway (s) tuned for 300 vehicles across 5 lanes
-  s0:    1.5,   // min bumper-to-bumper gap (m)
+  v0:    32,    // desired free-flow speed m/s (~115 km/h)
+  aMax:  1.35,  // base queue acceleration (boosted up to 3.6 m/s² when open green road is ahead)
+  b:     2.2,   // comfortable deceleration (m/s²)
+  T:     0.72,  // safe time headway (s) tuned for 300 vehicles across 5 lanes
+  s0:    1.6,   // min bumper-to-bumper gap (m)
   delta: 4,
-  vehicleLen:    4.3,
-  truckLen:      6.2,
-  busLen:        10.2,
-  minivanLen:    4.7,
-  motorcycleLen: 3.8,
+  vehicleLen:    4.6,
+  truckLen:      9.6,
+  busLen:        11.0,
+  minivanLen:    5.0,
+  motorcycleLen: 3.6,
 };
 
-/** IDM acceleration (Treiber 2000, Eq. 2) */
+/** IDM acceleration (Treiber 2000, Eq. 2) with open-road acceleration boost */
 export function idmAccel(v, dv, gap, p) {
   const { v0, aMax, b, T, s0, delta } = p;
   gap = Math.max(gap, 0.01);
   const sStar = s0 + Math.max(0, v * T + (v * dv) / (2 * Math.sqrt(aMax * b)));
-  return aMax * (1 - Math.pow(v / v0, delta) - Math.pow(sStar / gap, 2));
+  const rawRatio = 1 - Math.pow(v / v0, delta) - Math.pow(sStar / gap, 2);
+  // When accelerating into open green road ahead (gap > 14m), drivers accelerate briskly (up to ~3.6 m/s²)
+  if (rawRatio > 0) {
+    const openRoadBoost = Math.max(0, Math.min(1.0, (gap - 14.0) / 20.0));
+    const effectiveAMax = aMax + openRoadBoost * 2.25;
+    return effectiveAMax * rawRatio;
+  }
+  return aMax * rawRatio;
 }
 
 /**
@@ -59,8 +66,8 @@ export function createVehicles(count, totalLength, params) {
     positions.sort((a, b) => a - b);
 
     // Resolve spawn overlaps using relaxation steps scaled to lane density
-    const minSpawnGap = Math.min(12.0, (totalLength / perLane) * 0.85);
-    for (let iter = 0; iter < 10; iter++) {
+    const minSpawnGap = Math.min(13.8, (totalLength / perLane) * 0.88);
+    for (let iter = 0; iter < 16; iter++) {
       for (let i = 0; i < perLane; i++) {
         const nextIdx = (i + 1) % perLane;
         let gap = positions[nextIdx] - positions[i];
@@ -97,6 +104,12 @@ export function createVehicles(count, totalLength, params) {
       }
 
       const s = positions[k];
+      const maxLatOffset =
+        type === 'truck' || type === 'bus'
+          ? 0.32
+          : type === 'motorcycle'
+          ? 0.85
+          : 0.56;
 
       vehicles.push({
         id,
@@ -110,9 +123,7 @@ export function createVehicles(count, totalLength, params) {
         type,
         isTruck: type === 'truck', // legacy compatibility
         perturbTimer: -1,       // -1 = no pending perturbation
-        lateralNoise: type === 'motorcycle'
-          ? (Math.random() - 0.5) * 3.6  // motorcycles drift up to 1.8m left/right
-          : (Math.random() - 0.5) * 2.6, // other vehicles drift up to 1.3m
+        lateralNoise: (Math.random() - 0.5) * maxLatOffset,
         weavePhase: Math.random() * Math.PI * 2,
         weaveSpeed: 0.5 + Math.random() * 0.8,
       });
@@ -174,31 +185,50 @@ export function stepVehicles(vehicles, params, road, dt) {
     byLane[l].sort((a, b) => a.s - b.s);
   }
 
-  // 1.5 Conservative Lane Changing (rare & strict so phantom jam queues do not dissolve)
+  // 1.5 Safe & Responsive Lane Changing (when adjacent lane is moving faster and has safe clearance)
   for (const ego of vehicles) {
     if (ego.visualLane === undefined) ego.visualLane = ego.lane;
+    if (ego.laneChangeCooldown > 0) {
+      ego.laneChangeCooldown = Math.max(0, ego.laneChangeCooldown - dt);
+    }
 
-    // Only allow occasional lane changes before a car is locked in a braking queue
-    if (ego.v < 4.0 || ego.a < -0.25) continue;
-    const checkRate = 0.008 * Math.min(1.0, dt / 0.05);
+    // A stopped or nearly stopped car cannot swerve left or right to change lanes
+    if (ego.v < 2.0) continue;
+
+    // Do not start a new lane change while mid-maneuver, on cooldown, or actively seeding a hard-brake event
+    if (Math.abs(ego.lane - ego.visualLane) > 0.15) continue;
+    if (ego.laneChangeCooldown > 0 || ego.perturbTimer > 0) continue;
+
+    // Evaluate lane-change opportunities ~2.5 times per second per impeded vehicle
+    const checkRate = 2.5 * dt;
     if (Math.random() > checkRate) continue;
 
     const currentLane = ego.lane;
-
-    // Find current leader and gap
     const currentLaneVehicles = byLane[currentLane];
+    if (currentLaneVehicles.length <= 1) continue;
+
     const egoIdx = currentLaneVehicles.indexOf(ego);
+    if (egoIdx === -1) continue;
     const currentLeader = currentLaneVehicles[(egoIdx + 1) % currentLaneVehicles.length];
     let currentGap = currentLeader.s - ego.s - (ego.length / 2) - (currentLeader.length / 2);
     if (currentGap < 0) currentGap += totalLength;
 
-    const approachingCongestion =
-      currentGap < 35.0 && currentLeader.v < ego.v - 3.0;
-    if (!approachingCongestion) continue;
+    const myDesiredV = params.v0 * ego.noiseV0;
+    const currentLaneSpeed = Math.min(ego.v, currentLeader.v);
+
+    // Driver wants to change lanes if closing in on a slower leader or stuck crawling behind a slow/stopped car
+    const isImpeded =
+      (currentGap < 42.0 && currentLeader.v < ego.v - 1.5) ||
+      (currentGap < 26.0 && currentLeader.v < myDesiredV * 0.72 && ego.v < myDesiredV * 0.75);
+    if (!isImpeded) continue;
 
     const candidates = [];
     if (currentLane > 0) candidates.push(currentLane - 1);
     if (currentLane < NUM_LANES - 1) candidates.push(currentLane + 1);
+
+    let bestLane = -1;
+    let bestScore = 0;
+    let bestTargetSpeed = 0;
 
     for (const targetLane of candidates) {
       const laneVehicles = byLane[targetLane];
@@ -206,8 +236,26 @@ export function stepVehicles(vehicles, params, road, dt) {
       let targetFollower = null;
       let minLeaderGap = Infinity;
       let minFollowerGap = Infinity;
+      let overlapBlocked = false;
 
-      for (const other of laneVehicles) {
+      for (const other of vehicles) {
+        if (other === ego) continue;
+        // Check all vehicles in targetLane OR visually straddling targetLane during a lane change
+        const inTarget =
+          other.lane === targetLane ||
+          Math.abs((other.visualLane ?? other.lane) - targetLane) < 0.65;
+        if (!inTarget) continue;
+
+        let signedDiff = other.s - ego.s;
+        if (signedDiff > totalLength * 0.5) signedDiff -= totalLength;
+        if (signedDiff < -totalLength * 0.5) signedDiff += totalLength;
+
+        const minBodyClearance = (ego.length + other.length) * 0.5 + 4.0;
+        if (Math.abs(signedDiff) < minBodyClearance) {
+          overlapBlocked = true;
+          break;
+        }
+
         let gap = other.s - ego.s;
         if (gap < 0) gap += totalLength;
         if (gap < minLeaderGap) {
@@ -223,27 +271,61 @@ export function stepVehicles(vehicles, params, road, dt) {
         }
       }
 
-      let leadGap = minLeaderGap;
-      let followGap = minFollowerGap;
+      if (overlapBlocked) continue;
 
-      if (targetLeader) {
-        leadGap = minLeaderGap - (ego.length / 2) - (targetLeader.length / 2);
-      }
+      const leadGap = targetLeader
+        ? minLeaderGap - (ego.length / 2) - (targetLeader.length / 2)
+        : totalLength;
+      const followGap = targetFollower
+        ? minFollowerGap - (targetFollower.length / 2) - (ego.length / 2)
+        : totalLength;
+
+      const targetSpeed = targetLeader ? targetLeader.v : myDesiredV;
+
+      // 1. Other lane must be moving and appreciably faster (or much clearer) than current lane
+      const isOtherLaneMoving =
+        targetSpeed > 3.5 &&
+        (targetSpeed > currentLaneSpeed + 2.0 ||
+          (leadGap > currentGap + 10.0 && targetSpeed > currentLaneSpeed + 0.8));
+      if (!isOtherLaneMoving) continue;
+
+      // 2. Enough space ahead & behind to safely merge without cutting off approaching traffic
+      const minSafeLeadGap =
+        Math.max(6.5, params.s0 + ego.v * 0.50) + Math.max(0, ego.v - targetSpeed) * 0.75;
+      const minSafeFollowGap = targetFollower
+        ? Math.max(6.5, params.s0 + targetFollower.v * 0.45 + Math.max(0, targetFollower.v - ego.v) * 0.80)
+        : 0;
+
+      if (leadGap < minSafeLeadGap || followGap < minSafeFollowGap) continue;
+
+      // MOBIL politeness/safety check: ensure follower in target lane does not have to slam brakes (< -3.6 m/s²)
       if (targetFollower) {
-        followGap = minFollowerGap - (targetFollower.length / 2) - (ego.length / 2);
+        const mergeSpeed = Math.max(ego.v, Math.min(targetSpeed, 3.2));
+        const followerDecel = idmAccel(
+          targetFollower.v,
+          targetFollower.v - mergeSpeed,
+          followGap,
+          params
+        );
+        if (followerDecel < -3.6) continue;
       }
 
-      // Require generous clearance so lane changes never disrupt jam wave formation
-      if (leadGap < 25.0 || followGap < 18.0) continue;
-
-      const targetLaneBetter =
-        !targetLeader ||
-        (leadGap > currentGap + 12.0 && targetLeader.v > currentLeader.v + 4.0);
-
-      if (targetLaneBetter) {
-        ego.lane = targetLane;
-        break;
+      const score = (targetSpeed - currentLaneSpeed) * 2.5 + Math.min(leadGap, 45.0) * 0.35;
+      if (score > bestScore) {
+        bestScore = score;
+        bestLane = targetLane;
+        bestTargetSpeed = targetSpeed;
       }
+    }
+
+    if (bestLane !== -1) {
+      // Update byLane immediately so two cars never merge into the same gap on the same tick
+      currentLaneVehicles.splice(egoIdx, 1);
+      ego.lane = bestLane;
+      ego.laneChangeCooldown = 2.4 + Math.random() * 1.4;
+      const dstLane = byLane[bestLane];
+      dstLane.push(ego);
+      dstLane.sort((a, b) => a.s - b.s);
     }
   }
 
@@ -292,10 +374,42 @@ export function stepVehicles(vehicles, params, road, dt) {
   // 5. Integrate & update visual lane interpolation
   for (const car of vehicles) {
     if (car.visualLane === undefined) car.visualLane = car.lane;
-    car.visualLane += (car.lane - car.visualLane) * (dt * 2.5); // smooth visual shift
     car.a = nextA[car.id];
     car.braking = car.a < -0.3 || car.v < 1.5;
     car.v = Math.max(0, car.v + car.a * dt);
+    // Lateral lane-change movement requires forward speed — a stopped car cannot slide sideways
+    const speedFactor = Math.max(0, Math.min(1.0, (car.v - 0.5) / 4.5));
+    car.visualLane += (car.lane - car.visualLane) * (dt * 2.5 * speedFactor);
     car.s = (car.s + car.v * dt + totalLength) % totalLength;
+  }
+
+  // 6. Hard physical bumper-to-bumper non-overlapping enforcement (prevents any truck/car from ever passing through its leader)
+  for (let l = 0; l < NUM_LANES; l++) {
+    const lane = byLane[l];
+    const M = lane.length;
+    if (M <= 1) continue;
+
+    // Traverse backward from leader to follower twice around the ring so queues pack cleanly with zero overlap
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = M - 1; i >= 0; i--) {
+        const ego = lane[i];
+        const leader = lane[(i + 1) % M];
+        const minCenterDist = (ego.length + leader.length) * 0.5 + 1.1;
+
+        let forwardDist = (leader.s - ego.s + totalLength) % totalLength;
+        // If ego overshot leader this step, forwardDist wrapped near totalLength (> 0.6 * totalLength)
+        if (forwardDist > totalLength * 0.6) {
+          forwardDist -= totalLength;
+        }
+
+        if (forwardDist < minCenterDist) {
+          ego.s = (leader.s - minCenterDist + totalLength) % totalLength;
+          if (ego.v > leader.v) {
+            ego.v = leader.v * 0.95;
+          }
+          ego.braking = true;
+        }
+      }
+    }
   }
 }

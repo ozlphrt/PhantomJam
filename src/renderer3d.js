@@ -1722,10 +1722,10 @@ export class Renderer3D {
       const visualLane = car.visualLane !== undefined ? car.visualLane : car.lane;
       const latNoise = car.lateralNoise !== undefined ? car.lateralNoise : 0;
 
-      // Dynamic slow-weaving to represent micro-steering adjustments
+      // Distance-based micro-weaving so stopped cars (constant s) never sway left or right in place
       const weaveSpeed = car.weaveSpeed !== undefined ? car.weaveSpeed : 0.8;
       const weavePhase = car.weavePhase !== undefined ? car.weavePhase : 0;
-      const weave = Math.sin(nowSec * weaveSpeed + weavePhase) * 0.35;
+      const weave = Math.sin(car.s * 0.045 * weaveSpeed + weavePhase) * 0.12;
 
       const offset = (visualLane - 2) * laneWidth + latNoise + weave;
 
@@ -1752,8 +1752,10 @@ export class Renderer3D {
       up.crossVectors(right, forward).normalize();
 
       const lateralDiff = car.lane - visualLane;
-      const v_lat = lateralDiff * 2.5 * laneWidth;
-      const steeringAngle = Math.max(-0.25, Math.min(0.25, Math.atan2(v_lat, Math.max(1.0, car.v))));
+      const moveFactor = Math.max(0, Math.min(1.0, (car.v - 0.5) / 4.5));
+      const v_lat = lateralDiff * 2.5 * laneWidth * moveFactor;
+      const steeringAngle =
+        Math.max(-0.22, Math.min(0.22, Math.atan2(v_lat, Math.max(2.0, car.v)))) * moveFactor;
 
       steeredForward.copy(forward).applyAxisAngle(up, -steeringAngle);
       steeredRight.crossVectors(steeredForward, up).normalize();
@@ -2180,6 +2182,20 @@ export class Renderer3D {
     if (this.densityCrestMesh) this.densityCrestMesh.visible = this.graphEnabled;
     if (this.densityBaseLine) this.densityBaseLine.visible = this.graphEnabled;
     return this.graphEnabled;
+  }
+
+  /**
+   * Toggles the Congestion Center Label Callout ON or OFF (default ON, toggled with keystroke C)
+   */
+  setLabelEnabled(enabled) {
+    this.labelEnabled = Boolean(enabled);
+    if (!this.labelEnabled) {
+      const jamCallout = this._calloutEl || (this._calloutEl = document.getElementById('jam-callout'));
+      const leaderSvg = this._leaderSvgEl || (this._leaderSvgEl = document.getElementById('jam-leader-svg'));
+      if (jamCallout) jamCallout.style.opacity = '0';
+      if (leaderSvg) leaderSvg.style.opacity = '0';
+    }
+    return this.labelEnabled;
   }
 
   /**
@@ -2722,7 +2738,11 @@ export class Renderer3D {
     const leaderSvg = this._leaderSvgEl || (this._leaderSvgEl = document.getElementById('jam-leader-svg'));
     if (!jamCallout) return;
 
-    if (!this.jamStats || !this.jamStats.active || !this.jamMarker) {
+    if (this.labelEnabled === undefined) {
+      this.labelEnabled = false;
+    }
+
+    if (!this.labelEnabled || !this.jamStats || !this.jamStats.active || !this.jamMarker) {
       jamCallout.style.opacity = '0';
       if (leaderSvg) leaderSvg.style.opacity = '0';
       return;

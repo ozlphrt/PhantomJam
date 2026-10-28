@@ -256,10 +256,13 @@ if (cameraCycleBtn) {
 
 // Keystroke H toggles 3D Hexagonal Congestion Tunnel ON/OFF (starts OFF)
 // Keystroke G toggles 3D Population Graph ON/OFF (starts OFF)
+// Keystroke C toggles Congestion Center Label ON/OFF (starts ON)
 const hexHudBtn = document.getElementById('hex-hud');
 const hexHudState = document.getElementById('hex-hud-state');
 const graphHudBtn = document.getElementById('graph-hud');
 const graphHudState = document.getElementById('graph-hud-state');
+const labelHudBtn = document.getElementById('label-hud');
+const labelHudState = document.getElementById('label-hud-state');
 
 function toggleHexagons() {
   const enabled = renderer3d.setHexagonsEnabled(!renderer3d.hexagonsEnabled);
@@ -281,11 +284,25 @@ function toggleGraph() {
   }
 }
 
+function toggleLabel() {
+  const current = renderer3d.labelEnabled !== undefined ? renderer3d.labelEnabled : false;
+  const enabled = renderer3d.setLabelEnabled(!current);
+  if (labelHudBtn) {
+    labelHudBtn.classList.toggle('active', enabled);
+  }
+  if (labelHudState) {
+    labelHudState.textContent = enabled ? 'ON' : 'OFF';
+  }
+}
+
 if (hexHudBtn) {
   hexHudBtn.addEventListener('click', toggleHexagons);
 }
 if (graphHudBtn) {
   graphHudBtn.addEventListener('click', toggleGraph);
+}
+if (labelHudBtn) {
+  labelHudBtn.addEventListener('click', toggleLabel);
 }
 
 window.addEventListener('keydown', e => {
@@ -295,6 +312,8 @@ window.addEventListener('keydown', e => {
     toggleHexagons();
   } else if (e.key === 'g' || e.key === 'G') {
     toggleGraph();
+  } else if (e.key === 'c' || e.key === 'C') {
+    toggleLabel();
   }
 });
 

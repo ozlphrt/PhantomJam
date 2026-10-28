@@ -16,23 +16,31 @@
       <main id="main">
         <div id="simulation-area">
           <canvas id="road-canvas"></canvas>
+          <div class="hud-top-bar">
+            <button id="hex-hud" class="hex-hud" type="button" title="Press H to toggle 3D Hexagonal Congestion Tunnel">
+              <kbd class="hex-key">H</kbd>
+              <span class="hex-label">Hexagons:</span>
+              <span id="hex-hud-state" class="hex-state">OFF</span>
+            </button>
+
+            <button id="graph-hud" class="hex-hud graph-hud" type="button" title="Press G to toggle 3D Population Graph">
+              <kbd class="hex-key">G</kbd>
+              <span class="hex-label">Graph:</span>
+              <span id="graph-hud-state" class="hex-state">OFF</span>
+            </button>
+
+            <button id="label-hud" class="hex-hud label-hud" type="button" title="Press C to toggle Congestion Center Label">
+              <kbd class="hex-key">C</kbd>
+              <span class="hex-label">Label:</span>
+              <span id="label-hud-state" class="hex-state">OFF</span>
+            </button>
+          </div>
+
           <div id="fps-hud" class="fps-hud">
             <span id="fps-dot" class="fps-dot"></span>
             <span id="fps-hud-val">--</span>
             <span class="fps-hud-unit">FPS</span>
           </div>
-
-          <button id="hex-hud" class="hex-hud" type="button" title="Press H to toggle 3D Hexagonal Congestion Tunnel">
-            <kbd class="hex-key">H</kbd>
-            <span class="hex-label">Hexagons:</span>
-            <span id="hex-hud-state" class="hex-state">OFF</span>
-          </button>
-
-          <button id="graph-hud" class="hex-hud graph-hud" type="button" title="Press G to toggle 3D Population Graph">
-            <kbd class="hex-key">G</kbd>
-            <span class="hex-label">Graph:</span>
-            <span id="graph-hud-state" class="hex-state">OFF</span>
-          </button>
 
           <svg id="jam-leader-svg" class="jam-leader-svg" style="opacity: 0;">
             <defs>
