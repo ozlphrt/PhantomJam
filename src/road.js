@@ -15,11 +15,11 @@ const TWO_PI = Math.PI * 2;
  * y(t) = R * sin(t) * cos(t)  (or sin(2t) / 2)
  * We scale x and y to create a proportional Figure-8.
  */
-export function getRawPosition(t, R = 110) {
+export function getRawPosition(t, R = 158) {
   const angle = t * TWO_PI;
-  // Lemniscate of Gerono
+  // Lemniscate of Gerono matched to the figure-8 proportions in the ground mural (dy/dx = 122/385)
   const x = R * Math.sin(angle);
-  const y = R * Math.sin(angle) * Math.cos(angle) * 1.2;
+  const y = R * Math.sin(angle) * Math.cos(angle) * 0.634;
   
   // Smoothly distribute elevation change over the entire loop using a cosine wave.
   // At t=0 and t=1, z = H. At t=0.5, z = 0.
@@ -32,7 +32,7 @@ export function getRawPosition(t, R = 110) {
 /**
  * Builds the road polyline parameterised by arc-length.
  */
-export function buildRoad(R = 110, N = 800) {
+export function buildRoad(R = 158, N = 800) {
   const rawPoints = [];
   for (let i = 0; i < N; i++) {
     rawPoints.push(getRawPosition(i / N, R));

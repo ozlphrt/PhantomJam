@@ -22,6 +22,31 @@
             <span class="fps-hud-unit">FPS</span>
           </div>
 
+          <button id="hex-hud" class="hex-hud" type="button" title="Press H to toggle 3D Hexagonal Congestion Tunnel">
+            <kbd class="hex-key">H</kbd>
+            <span class="hex-label">Hexagons:</span>
+            <span id="hex-hud-state" class="hex-state">OFF</span>
+          </button>
+
+          <button id="graph-hud" class="hex-hud graph-hud" type="button" title="Press G to toggle 3D Population Graph">
+            <kbd class="hex-key">G</kbd>
+            <span class="hex-label">Graph:</span>
+            <span id="graph-hud-state" class="hex-state">OFF</span>
+          </button>
+
+          <svg id="jam-leader-svg" class="jam-leader-svg" style="opacity: 0;">
+            <defs>
+              <linearGradient id="jam-leader-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stop-color="#ff5c5c" stop-opacity="0.95" />
+                <stop offset="100%" stop-color="#ff3b30" stop-opacity="0.35" />
+              </linearGradient>
+            </defs>
+            <line id="jam-leader-line" x1="0" y1="0" x2="0" y2="0" stroke="url(#jam-leader-grad)" stroke-width="1.75" />
+            <line id="jam-leader-dash" x1="0" y1="0" x2="0" y2="0" stroke="#ff9f9a" stroke-width="1.75" stroke-dasharray="4 6" stroke-opacity="0.65" />
+            <circle id="jam-anchor-ring" cx="0" cy="0" r="8" fill="rgba(255, 59, 48, 0.15)" stroke="#ff5c5c" stroke-width="1.5" />
+            <circle id="jam-anchor-dot" cx="0" cy="0" r="3.5" fill="#ff3b30" />
+          </svg>
+
           <div id="jam-callout" class="jam-callout" style="opacity: 0;">
             <div class="jam-callout-header">
               <span class="jam-pulse-dot"></span>
@@ -34,7 +59,7 @@
                 <span id="jam-stat-cars" class="jam-stat-val">0 cars</span>
               </div>
               <div class="jam-stat">
-                <span class="jam-stat-label">Core Speed</span>
+                <span class="jam-stat-label">Avg Speed</span>
                 <span id="jam-stat-speed" class="jam-stat-val">0.0 m/s</span>
               </div>
               <div class="jam-stat">
@@ -42,7 +67,7 @@
                 <span id="jam-stat-len" class="jam-stat-val">0 m</span>
               </div>
             </div>
-            <div class="jam-callout-pointer"></div>
+            <div class="jam-callout-dock"></div>
           </div>
         </div>
 
@@ -101,6 +126,49 @@
               <button id="btn-pause" class="btn btn-primary">⏸ Pause</button>
               <button id="btn-reset" class="btn btn-secondary">↺ Reset</button>
               <button id="btn-jam" class="btn btn-jam">⚡ Trigger Jam</button>
+            </div>
+          </section>
+
+          <section class="panel" id="lighting-panel">
+            <h2>Lighting &amp; Atmosphere</h2>
+
+            <div class="control-group">
+              <label for="ctrl-key-int">Sun Intensity <span class="val-display" id="disp-key-int">2.25</span></label>
+              <input type="range" id="ctrl-key-int" min="0.2" max="4.0" value="2.25" step="0.05" />
+            </div>
+
+            <div class="control-group">
+              <label for="ctrl-sun-el">Sun Elevation <span class="val-display" id="disp-sun-el">42°</span></label>
+              <input type="range" id="ctrl-sun-el" min="15" max="85" value="42" step="1" />
+            </div>
+
+            <div class="control-group">
+              <label for="ctrl-sun-az">Sun Azimuth <span class="val-display" id="disp-sun-az">-26°</span></label>
+              <input type="range" id="ctrl-sun-az" min="-180" max="180" value="-26" step="1" />
+            </div>
+
+            <div class="control-group">
+              <label for="ctrl-hemi-int">Ambient Light <span class="val-display" id="disp-hemi-int">1.52</span></label>
+              <input type="range" id="ctrl-hemi-int" min="0.0" max="2.5" value="1.52" step="0.02" />
+            </div>
+
+            <div class="control-group">
+              <label for="ctrl-fill-int">Fill Light <span class="val-display" id="disp-fill-int">0.40</span></label>
+              <input type="range" id="ctrl-fill-int" min="0.0" max="2.0" value="0.4" step="0.05" />
+            </div>
+
+            <div class="control-group">
+              <label for="ctrl-exposure">Exposure <span class="val-display" id="disp-exposure">1.16</span></label>
+              <input type="range" id="ctrl-exposure" min="0.30" max="2.00" value="1.16" step="0.02" />
+            </div>
+
+            <div class="control-group">
+              <label for="ctrl-fog-dist">Fog Start Dist <span class="val-display" id="disp-fog-dist">100m</span></label>
+              <input type="range" id="ctrl-fog-dist" min="100" max="1000" value="100" step="25" />
+            </div>
+
+            <div class="btn-row">
+              <button id="btn-copy-tuning" class="btn btn-primary" style="width: 100%;">📋 Copy Tuning to Clipboard</button>
             </div>
           </section>
         </aside>

@@ -287,18 +287,19 @@ export class Renderer3D {
   constructor(canvas) {
     this.canvas = canvas;
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x23252b);
-    this.scene.fog = new THREE.FogExp2(0x23252b, 0.0011);
+    this.scene.background = new THREE.Color(0x1f2b14);
+    // Linear fog starting 500m away from the Figure-8 highway
+    this.scene.fog = new THREE.Fog(0x1f2b14, 650, 1050);
 
     const width = canvas.clientWidth || 800;
     const height = canvas.clientHeight || 600;
 
     // Camera
-    this.camera = new THREE.PerspectiveCamera(45, width / height, 1, 1500);
+    this.camera = new THREE.PerspectiveCamera(45, width / height, 1, 1300);
     this.camera.position.set(-230, 90, 100);
     this.camera.lookAt(0, 5, 0);
 
-    // WebGL Renderer — optimized for high FPS with crisp shadows & filmic tone mapping
+    // WebGL Renderer — optimized for 60 FPS with crisp shadows & filmic tone mapping
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
@@ -306,9 +307,12 @@ export class Renderer3D {
     });
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.autoUpdate = false;
+    this.renderer.shadowMap.needsUpdate = true;
+    this._renderTick = 0;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.92;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    this.renderer.toneMappingExposure = 1.16;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
     this.renderer.setSize(width, height, false);
 
     // Controls
@@ -488,9 +492,15 @@ export class Renderer3D {
           const normGeos = allIndexed ? geos : geos.map((g) => (g.index ? g.toNonIndexed() : g));
           const mergedGeo = normGeos.length === 1 ? normGeos[0] : mergeGeometries(normGeos);
           if (mergedGeo) {
-            parts.push({ geometry: mergedGeo, material: mat });
+            parts.push({
+              geometry: mergedGeo,
+              material: mat,
+              vertCount: mergedGeo.attributes.position ? mergedGeo.attributes.position.count : 0,
+            });
           }
         }
+        // Sort parts largest-first so parts[0] is the primary vehicle body for shadow casting
+        parts.sort((a, b) => b.vertCount - a.vertCount);
 
         if (parts.length === 0) continue;
 
@@ -594,134 +604,242 @@ export class Renderer3D {
   }
 
   _setupLights() {
-    const hemiLight = new THREE.HemisphereLight(0xddeeff, 0x161820, 0.62);
-    this.scene.add(hemiLight);
+    this.lightTuning = {
+      keyIntensity: 2.25,
+      sunAzimuth: -26,
+      sunElevation: 42,
+      hemiIntensity: 1.52,
+      fillIntensity: 0.4,
+      exposure: 1.16,
+      fogStartDist: 100,
+    };
 
-    const keyLight = new THREE.DirectionalLight(0xfff6e8, 1.85);
-    keyLight.position.set(140, 220, 110);
+    const hemiLight = new THREE.HemisphereLight(0xddeeff, 0x161820, this.lightTuning.hemiIntensity);
+    this.scene.add(hemiLight);
+    this.hemiLight = hemiLight;
+
+    const keyLight = new THREE.DirectionalLight(0xfff6e8, this.lightTuning.keyIntensity);
+    keyLight.position.set(188, 189, -92);
     keyLight.castShadow = true;
-    keyLight.shadow.mapSize.width = 4096;
-    keyLight.shadow.mapSize.height = 4096;
+    keyLight.shadow.mapSize.width = 2048;
+    keyLight.shadow.mapSize.height = 2048;
     keyLight.shadow.camera.near = 20;
     keyLight.shadow.camera.far = 520;
-    const d = 155;
+    const d = 185;
     keyLight.shadow.camera.left = -d;
     keyLight.shadow.camera.right = d;
     keyLight.shadow.camera.top = d;
     keyLight.shadow.camera.bottom = -d;
-    keyLight.shadow.bias = -0.0003;
-    keyLight.shadow.normalBias = 0.015;
+    keyLight.shadow.bias = -0.0004;
+    keyLight.shadow.normalBias = 0.018;
     this.scene.add(keyLight);
+    this.keyLight = keyLight;
 
-    const fillLight = new THREE.DirectionalLight(0x7799ff, 0.35);
+    const fillLight = new THREE.DirectionalLight(0x7799ff, this.lightTuning.fillIntensity);
     fillLight.position.set(-150, 150, -100);
     this.scene.add(fillLight);
+    this.fillLight = fillLight;
+
+    this.updateLightTuning();
   }
 
-  _createCenterBeacon(primaryHex, secondaryHex) {
+  updateLightTuning(partial = {}) {
+    Object.assign(this.lightTuning, partial);
+    const {
+      keyIntensity,
+      sunAzimuth,
+      sunElevation,
+      hemiIntensity,
+      fillIntensity,
+      exposure,
+    } = this.lightTuning;
+
+    if (this.keyLight) {
+      this.keyLight.intensity = keyIntensity;
+      const elRad = (sunElevation * Math.PI) / 180;
+      const azRad = (sunAzimuth * Math.PI) / 180;
+      const r = 282;
+      const horiz = r * Math.cos(elRad);
+      this.keyLight.position.set(
+        horiz * Math.cos(azRad),
+        r * Math.sin(elRad),
+        horiz * Math.sin(azRad)
+      );
+      this.renderer.shadowMap.needsUpdate = true;
+    }
+    if (this.hemiLight) {
+      this.hemiLight.intensity = hemiIntensity;
+    }
+    if (this.fillLight) {
+      this.fillLight.intensity = fillIntensity;
+    }
+    if (this.renderer) {
+      this.renderer.toneMappingExposure = exposure;
+    }
+  }
+
+  getLightTuning() {
+    return { ...this.lightTuning };
+  }
+
+  _createCenterBeacon() {
     const group = new THREE.Group();
 
-    // Tarmac-aligned surface group (tilted dynamically to match road slope & normal)
-    const surfaceGroup = new THREE.Group();
+    // Procedural radial-bloom canvas texture in neutral white so vertexColors drive the road heatmap color
+    const glowCanvas = document.createElement('canvas');
+    glowCanvas.width = 256;
+    glowCanvas.height = 256;
+    const gCtx = glowCanvas.getContext('2d');
+    const grad = gCtx.createRadialGradient(128, 128, 4, 128, 128, 126);
+    grad.addColorStop(0.0, 'rgba(255, 255, 255, 0.26)');
+    grad.addColorStop(0.42, 'rgba(255, 255, 255, 0.06)');
+    grad.addColorStop(0.54, 'rgba(255, 255, 255, 0.54)');
+    grad.addColorStop(0.62, 'rgba(255, 255, 255, 0.08)');
+    grad.addColorStop(0.76, 'rgba(255, 255, 255, 0.22)');
+    grad.addColorStop(0.86, 'rgba(255, 255, 255, 0.82)');
+    grad.addColorStop(0.93, 'rgba(255, 255, 255, 0.25)');
+    grad.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
+    gCtx.fillStyle = grad;
+    gCtx.fillRect(0, 0, 256, 256);
+    const glowTex = new THREE.CanvasTexture(glowCanvas);
 
-    // Soft translucent inner glow disc on the tarmac
-    const discGeo = new THREE.CircleGeometry(11.6, 48);
+    // Subdivided tarmac-conforming mesh so every vertex sits 3.2cm above the curved road (right under the tires)
+    const gridSegs = 20;
+    const discGeo = new THREE.PlaneGeometry(25.0, 25.0, gridSegs, gridSegs);
     discGeo.rotateX(-Math.PI / 2);
+
+    // Store base local (x, z) offsets and initialize per-vertex color buffer for road heatmap coloring
+    const posAttr = discGeo.attributes.position;
+    const baseOffsets = new Float32Array(posAttr.count * 2);
+    const discColors = new Float32Array(posAttr.count * 3);
+    for (let i = 0; i < posAttr.count; i++) {
+      baseOffsets[i * 2]     = posAttr.getX(i); // along road forward
+      baseOffsets[i * 2 + 1] = posAttr.getZ(i); // across road width
+      discColors[i * 3]      = 1.0;
+      discColors[i * 3 + 1]  = 0.2;
+      discColors[i * 3 + 2]  = 0.15;
+    }
+    discGeo.setAttribute('color', new THREE.BufferAttribute(discColors, 3));
+
     const discMat = new THREE.MeshBasicMaterial({
-      color: primaryHex,
+      map: glowTex,
+      vertexColors: true,
       transparent: true,
-      opacity: 0.14,
+      opacity: 0.68,
+      blending: THREE.AdditiveBlending,
       side: THREE.DoubleSide,
       depthWrite: false,
       polygonOffset: true,
-      polygonOffsetFactor: -6,
-      polygonOffsetUnits: -6,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
     });
     const discMesh = new THREE.Mesh(discGeo, discMat);
-    discMesh.position.y = 0.26;
-    discMesh.renderOrder = 3;
-    surfaceGroup.add(discMesh);
-
-    // Outer primary highlight circle aligned with tarmac width
-    const ringGeo = new THREE.RingGeometry(11.0, 12.5, 48);
-    ringGeo.rotateX(-Math.PI / 2);
-    const ringMat = new THREE.MeshBasicMaterial({
-      color: primaryHex,
-      transparent: true,
-      opacity: 0.78,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      polygonOffset: true,
-      polygonOffsetFactor: -8,
-      polygonOffsetUnits: -8,
-    });
-    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-    ringMesh.position.y = 0.28;
-    ringMesh.renderOrder = 4;
-    surfaceGroup.add(ringMesh);
-
-    // Inner accent ring
-    const innerRingGeo = new THREE.RingGeometry(7.2, 7.65, 48);
-    innerRingGeo.rotateX(-Math.PI / 2);
-    const innerRingMat = new THREE.MeshBasicMaterial({
-      color: secondaryHex,
-      transparent: true,
-      opacity: 0.45,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      polygonOffset: true,
-      polygonOffsetFactor: -8,
-      polygonOffsetUnits: -8,
-    });
-    const innerRingMesh = new THREE.Mesh(innerRingGeo, innerRingMat);
-    innerRingMesh.position.y = 0.28;
-    innerRingMesh.renderOrder = 4;
-    surfaceGroup.add(innerRingMesh);
-
-    group.add(surfaceGroup);
-
-    // Vertical laser stem (stays upright in world space)
-    const stemGeo = new THREE.CylinderGeometry(0.09, 0.09, 9.5, 8);
-    stemGeo.translate(0, 4.75, 0);
-    const stemMat = new THREE.MeshBasicMaterial({
-      color: secondaryHex,
-      transparent: true,
-      opacity: 0.58,
-      depthWrite: false,
-    });
-    group.add(new THREE.Mesh(stemGeo, stemMat));
-
-    // Downward-pointing 3D diamond/cone pointer
-    const pointerGeo = new THREE.ConeGeometry(1.2, 2.4, 4);
-    pointerGeo.rotateX(Math.PI);
-    const pointerMat = new THREE.MeshBasicMaterial({ color: primaryHex });
-    const pointerCone = new THREE.Mesh(pointerGeo, pointerMat);
-    pointerCone.position.y = 9.5;
-    group.add(pointerCone);
+    discMesh.frustumCulled = false;
+    discMesh.renderOrder = 2;
+    this.scene.add(discMesh);
 
     group.userData = {
-      surfaceGroup,
-      ringMesh,
-      innerRingMesh,
-      pointerCone,
+      discMesh,
+      discGeo,
+      baseOffsets,
     };
     group.visible = false;
+    discMesh.visible = false;
     this.scene.add(group);
     return group;
   }
 
   _setupEnvironment() {
-    const gridHelper = new THREE.GridHelper(600, 60, 0x353740, 0x292b32);
-    gridHelper.position.y = -0.5;
-    this.scene.add(gridHelper);
+    // 1. Seamless surrounding turf floor extending to the horizon
+    const turfCanvas = document.createElement('canvas');
+    turfCanvas.width = 256;
+    turfCanvas.height = 256;
+    const tCtx = turfCanvas.getContext('2d');
+    const tImg = tCtx.createImageData(256, 256);
+    const tData = tImg.data;
+    for (let i = 0; i < tData.length; i += 4) {
+      const px = (i / 4) % 256;
+      const py = Math.floor(i / 4 / 256);
+      const n1 = Math.sin(px * 12.9898 + py * 78.233) * 43758.5453;
+      const grain = n1 - Math.floor(n1);
+      const patch =
+        0.5 +
+        0.25 * Math.sin((px / 256) * Math.PI * 4) * Math.cos((py / 256) * Math.PI * 4);
+      const shade = 0.78 + grain * 0.26 + (patch - 0.5) * 0.16;
+      tData[i]     = Math.round(44 * shade);
+      tData[i + 1] = Math.round(58 * shade);
+      tData[i + 2] = Math.round(24 * shade);
+      tData[i + 3] = 255;
+    }
+    tCtx.putImageData(tImg, 0, 0);
+    const turfTex = new THREE.CanvasTexture(turfCanvas);
+    turfTex.wrapS = THREE.RepeatWrapping;
+    turfTex.wrapT = THREE.RepeatWrapping;
+    turfTex.repeat.set(36, 36);
+    turfTex.colorSpace = THREE.SRGBColorSpace;
 
-    const floorGeo = new THREE.PlaneGeometry(1000, 1000);
-    const floorMat = new THREE.ShadowMaterial({ opacity: 0.52 });
-    const floor = new THREE.Mesh(floorGeo, floorMat);
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -0.49;
-    floor.receiveShadow = true;
-    this.scene.add(floor);
+    const outerFloorGeo = new THREE.PlaneGeometry(1600, 1600);
+    const outerFloorMat = new THREE.MeshLambertMaterial({ map: turfTex });
+    const outerFloor = new THREE.Mesh(outerFloorGeo, outerFloorMat);
+    outerFloor.rotation.x = -Math.PI / 2;
+    outerFloor.position.y = -0.52;
+    outerFloor.receiveShadow = true;
+    this.scene.add(outerFloor);
+
+    // 2. Centered 'PHANTOM JAM' turf emblem background directly beneath the Figure-8 highway
+    const texLoader = new THREE.TextureLoader();
+    texLoader.load('./phantom-jam-bg.jpg?v=4', (rawTex) => {
+      const img = rawTex.image;
+      const cw = 1024;
+      const ch = Math.round((img.height / img.width) * cw) || 610;
+      const canvas = document.createElement('canvas');
+      canvas.width = cw;
+      canvas.height = ch;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, cw, ch);
+
+      // Feather outer 8% border so the image blends seamlessly into the surrounding turf
+      const imgData = ctx.getImageData(0, 0, cw, ch);
+      const d = imgData.data;
+      const borderX = cw * 0.08;
+      const borderY = ch * 0.08;
+      for (let y = 0; y < ch; y++) {
+        const fy = Math.min(1.0, Math.min(y, ch - 1 - y) / borderY);
+        for (let x = 0; x < cw; x++) {
+          const fx = Math.min(1.0, Math.min(x, cw - 1 - x) / borderX);
+          const f = Math.min(fx, fy);
+          if (f < 1.0) {
+            const smoothF = f * f * (3 - 2 * f);
+            d[(y * cw + x) * 4 + 3] = Math.round(smoothF * 255);
+          }
+        }
+      }
+      ctx.putImageData(imgData, 0, 0);
+
+      const bgTex = new THREE.CanvasTexture(canvas);
+      bgTex.colorSpace = THREE.SRGBColorSpace;
+      bgTex.anisotropy = 4;
+
+      const logoGeo = new THREE.PlaneGeometry(420, 420 * (ch / cw));
+      const logoMat = new THREE.MeshLambertMaterial({
+        map: bgTex,
+        transparent: true,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      });
+      const logoMesh = new THREE.Mesh(logoGeo, logoMat);
+      logoMesh.rotation.x = -Math.PI / 2;
+      // Offset Z by +5.1m so the mural's figure-8 crossing (y=289px of 603px) sits at world origin (0,0)
+      logoMesh.position.set(0, -0.49, 5.1);
+      logoMesh.renderOrder = 1;
+      logoMesh.frustumCulled = false;
+      logoMesh.receiveShadow = true;
+      logoMesh.updateMatrix();
+      logoMesh.matrixAutoUpdate = false;
+      this.scene.add(logoMesh);
+    });
 
     // 3D Congestion Center Beacon (Red)
     this.jamMarker = this._createCenterBeacon(0xff3b30, 0xff5c52);
@@ -827,6 +945,325 @@ export class Renderer3D {
     this.roadSteps = steps;
     this.heatmapBins = 120;
     this.heatmapSmooth = new Float32Array(this.heatmapBins).fill(1.0);
+
+    // 1b. 3D Hexagonal Pipe Congestion Tunnel (true 3D cylindrical pipes: thick near Congestion Center circle, tapering & fading farther out)
+    const tunnelRadiusW = halfW + 0.35;
+    const tunnelRadiusH = 6.4;
+    const totalRoadLen = road.totalLength;
+
+    // Map 2D tunnel surface coordinates (s, theta in [0, PI]) to 3D world space on the arch
+    const evalArchPoint = (sVal, thetaVal) => {
+      const sWrapped = ((sVal % totalRoadLen) + totalRoadLen) % totalRoadLen;
+      const pt = getPointAtS(road, sWrapped);
+      const px = -pt.ty;
+      const pz = pt.tx;
+      const plen = Math.hypot(px, pz) || 1;
+      const nx = px / plen;
+      const nz = pz / plen;
+      const lat = Math.cos(thetaVal) * tunnelRadiusW;
+      const hgt = Math.sin(thetaVal) * tunnelRadiusH + 0.10;
+      return {
+        pos: new THREE.Vector3(pt.x + nx * lat, pt.z + hgt, pt.y + nz * lat),
+        s: sWrapped,
+      };
+    };
+
+    // Generate large hexagonal honeycomb cells around the loop and deduplicate shared pipe struts
+    const numCols = 96; // 96 columns around the ~1085m loop (~11.3m per column step)
+    const colStepS = totalRoadLen / numCols;
+    const hexRadS = colStepS / 1.5; // flat-top hexagon radius along road (~7.5m, 15m full hex width)
+    const numRows = 3; // 3 large hexagons spanning across the arch from left curb (0) to right curb (PI)
+    const rowStepTheta = Math.PI / numRows;
+    const hexRadTheta = rowStepTheta / Math.sqrt(3);
+
+    const uniqueEdges = new Map();
+    const uniqueNodes = new Map();
+    const quantKey = (sVal, thVal) => {
+      const sw = ((sVal % totalRoadLen) + totalRoadLen) % totalRoadLen;
+      const si = Math.round((sw / totalRoadLen) * (numCols * 6)) % (numCols * 6);
+      const ti = Math.round((thVal / Math.PI) * 180);
+      return `${si}_${ti}`;
+    };
+
+    for (let col = 0; col < numCols; col++) {
+      const centerS = col * colStepS;
+      const oddOffset = (col % 2) * 0.5;
+      for (let row = 0; row <= numRows; row++) {
+        const centerTheta = (row + oddOffset - 0.25) * rowStepTheta;
+        const corners = [];
+        for (let k = 0; k < 6; k++) {
+          const ang = (k * Math.PI) / 3;
+          const cs = centerS + hexRadS * Math.cos(ang);
+          const cth = Math.max(0.0, Math.min(Math.PI, centerTheta + hexRadTheta * Math.sin(ang)));
+          const key = quantKey(cs, cth);
+          corners.push({ s: cs, theta: cth, key });
+          if (!uniqueNodes.has(key) && cth > 0.01 && cth < Math.PI - 0.01) {
+            uniqueNodes.set(key, { s: cs, theta: cth });
+          }
+        }
+        for (let k = 0; k < 6; k++) {
+          const c0 = corners[k];
+          const c1 = corners[(k + 1) % 6];
+          if (c0.key === c1.key) continue;
+          // Skip flat curb-hugging segments on the very bottom edges if both lie on curb
+          if ((c0.theta <= 0.005 && c1.theta <= 0.005) || (c0.theta >= Math.PI - 0.005 && c1.theta >= Math.PI - 0.005)) {
+            continue;
+          }
+          const eKey = c0.key < c1.key ? `${c0.key}|${c1.key}` : `${c1.key}|${c0.key}`;
+          if (!uniqueEdges.has(eKey)) {
+            uniqueEdges.set(eKey, [c0, c1]);
+          }
+        }
+      }
+    }
+
+    // Build 3D cylindrical tube geometry for every hexagonal pipe strut (inflated along radial normal in vertex shader)
+    const pipeSides = 8;
+    const pipePos = [];
+    const pipeNorm = [];
+    const pipeSAttr = [];
+    const pipeIndices = [];
+    const axisVec = new THREE.Vector3();
+    const upTmp = new THREE.Vector3();
+    const uBasis = new THREE.Vector3();
+    const vBasis = new THREE.Vector3();
+    const radNorm = new THREE.Vector3();
+
+    for (const [c0, c1] of uniqueEdges.values()) {
+      const a = evalArchPoint(c0.s, c0.theta);
+      const b = evalArchPoint(c1.s, c1.theta);
+      axisVec.subVectors(b.pos, a.pos);
+      const len = axisVec.length();
+      if (len < 0.05) continue;
+      axisVec.divideScalar(len);
+
+      if (Math.abs(axisVec.y) < 0.9) upTmp.set(0, 1, 0);
+      else upTmp.set(1, 0, 0);
+      uBasis.crossVectors(axisVec, upTmp).normalize();
+      vBasis.crossVectors(axisVec, uBasis).normalize();
+
+      const baseV = pipePos.length / 3;
+      for (let end = 0; end < 2; end++) {
+        const endPt = end === 0 ? a : b;
+        for (let k = 0; k < pipeSides; k++) {
+          const phi = (k / pipeSides) * Math.PI * 2;
+          const cosP = Math.cos(phi);
+          const sinP = Math.sin(phi);
+          radNorm
+            .set(0, 0, 0)
+            .addScaledVector(uBasis, cosP)
+            .addScaledVector(vBasis, sinP)
+            .normalize();
+
+          pipePos.push(endPt.pos.x, endPt.pos.y, endPt.pos.z);
+          pipeNorm.push(radNorm.x, radNorm.y, radNorm.z);
+          pipeSAttr.push(endPt.s);
+        }
+      }
+
+      for (let k = 0; k < pipeSides; k++) {
+        const kNext = (k + 1) % pipeSides;
+        const i0 = baseV + k;
+        const i1 = baseV + kNext;
+        const i2 = baseV + pipeSides + k;
+        const i3 = baseV + pipeSides + kNext;
+        pipeIndices.push(i0, i2, i1, i1, i2, i3);
+      }
+    }
+
+    const tunnelGeo = new THREE.BufferGeometry();
+    tunnelGeo.setAttribute('position', new THREE.Float32BufferAttribute(pipePos, 3));
+    tunnelGeo.setAttribute('normal', new THREE.Float32BufferAttribute(pipeNorm, 3));
+    tunnelGeo.setAttribute('pipeS', new THREE.Float32BufferAttribute(pipeSAttr, 1));
+    tunnelGeo.setIndex(pipeIndices);
+
+    this.tunnelUniforms = {
+      uCenterS: { value: 0.0 },
+      uHalfWaveLen: { value: 0.0 },
+      uTotalLen: { value: totalRoadLen },
+      uSeverity: { value: 1.0 },
+    };
+
+    const tunnelMat = new THREE.ShaderMaterial({
+      uniforms: this.tunnelUniforms,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      vertexShader: `
+        attribute float pipeS;
+        uniform float uCenterS;
+        uniform float uHalfWaveLen;
+        uniform float uTotalLen;
+        uniform float uSeverity;
+        varying vec3 vNormal;
+        varying vec3 vViewDir;
+        varying float vProximity;
+
+        void main() {
+          float ds = abs(pipeS - uCenterS);
+          if (ds > uTotalLen * 0.5) ds = uTotalLen - ds;
+
+          float prox = 0.0;
+          if (uHalfWaveLen > 5.0 && ds < uHalfWaveLen) {
+            float u = ds / uHalfWaveLen;
+            prox = pow(1.0 - u, 1.45) * exp(-0.75 * u) * uSeverity;
+          }
+          vProximity = prox;
+
+          // Inflate 3D cylindrical pipe radius: thick (0.40m radius) near the Congestion Center circle,
+          // tapering down to thin pipes (0.02m) as distance from the circle increases
+          float pipeRadius = prox > 0.002 ? mix(0.02, 0.40, pow(prox, 1.25)) : 0.0;
+          vec3 inflatedPos = position + normal * pipeRadius;
+
+          vec4 mvPosition = modelViewMatrix * vec4(inflatedPos, 1.0);
+          vNormal = normalize(normalMatrix * normal);
+          vViewDir = normalize(-mvPosition.xyz);
+          gl_Position = projectionMatrix * mvPosition;
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vNormal;
+        varying vec3 vViewDir;
+        varying float vProximity;
+
+        void main() {
+          if (vProximity <= 0.003) discard;
+
+          vec3 N = normalize(vNormal);
+          vec3 V = normalize(vViewDir);
+          vec3 L = normalize(vec3(0.45, 0.82, 0.35));
+          vec3 H = normalize(L + V);
+
+          // 3D cylindrical pipe shading: diffuse wrap + glossy ridge highlight + subtle rim
+          float diff = abs(dot(N, L)) * 0.55 + 0.45;
+          float coreRidge = abs(dot(N, V));
+          float spec = pow(max(0.0, abs(dot(N, H))), 18.0) * 0.48;
+
+          vec3 baseRed = vec3(0.88, 0.12, 0.10);
+          vec3 highlightRed = vec3(1.0, 0.46, 0.40);
+          vec3 col = mix(baseRed * diff, highlightRed, spec + coreRidge * 0.28);
+
+          // Less transparent closer to the circle, progressively more transparent farther out
+          float alpha = clamp(pow(vProximity, 0.65) * (0.38 + 0.50 * coreRidge), 0.0, 0.88);
+          gl_FragColor = vec4(col, alpha);
+        }
+      `,
+    });
+    const tunnelMesh = new THREE.Mesh(tunnelGeo, tunnelMat);
+    tunnelMesh.renderOrder = 6;
+    tunnelMesh.frustumCulled = false;
+    this.hexagonsEnabled = Boolean(this.hexagonsEnabled);
+    tunnelMesh.visible = this.hexagonsEnabled;
+    this.scene.add(tunnelMesh);
+    this.tunnelMesh = tunnelMesh;
+    this.tunnelGeometry = tunnelGeo;
+
+    // 1c. 3D Vehicle-Count Graph Over the Road (height = # of cars, colored by road heatmap)
+    this.densitySmooth = new Float32Array(this.heatmapBins).fill(2.0);
+    const graphBasePos = new Float32Array((steps + 1) * 3);
+    const ribbonVerts = new Float32Array((steps + 1) * 2 * 3);
+    const ribbonColors = new Float32Array((steps + 1) * 2 * 3);
+    const crestVerts = new Float32Array((steps + 1) * 2 * 3);
+    const crestColors = new Float32Array((steps + 1) * 2 * 3);
+    const baseLineVerts = new Float32Array((steps + 1) * 3);
+    const ribbonIndices = [];
+
+    for (let i = 0; i <= steps; i++) {
+      const s = (i / steps) * road.totalLength;
+      const pt = getPointAtS(road, s);
+      const baseH = pt.z + 2.8; // baseline floating cleanly above vehicles
+
+      graphBasePos[i * 3]     = pt.x;
+      graphBasePos[i * 3 + 1] = baseH;
+      graphBasePos[i * 3 + 2] = pt.y;
+
+      baseLineVerts[i * 3]     = pt.x;
+      baseLineVerts[i * 3 + 1] = baseH;
+      baseLineVerts[i * 3 + 2] = pt.y;
+
+      const vIdx = i * 6;
+      // Bottom vertex (at baseline)
+      ribbonVerts[vIdx]     = pt.x;
+      ribbonVerts[vIdx + 1] = baseH;
+      ribbonVerts[vIdx + 2] = pt.y;
+      // Top vertex (at baseline + height(# of cars))
+      ribbonVerts[vIdx + 3] = pt.x;
+      ribbonVerts[vIdx + 4] = baseH + 2.0;
+      ribbonVerts[vIdx + 5] = pt.y;
+
+      // Glowing crest band along top of graph
+      crestVerts[vIdx]     = pt.x;
+      crestVerts[vIdx + 1] = baseH + 1.82;
+      crestVerts[vIdx + 2] = pt.y;
+      crestVerts[vIdx + 3] = pt.x;
+      crestVerts[vIdx + 4] = baseH + 2.12;
+      crestVerts[vIdx + 5] = pt.y;
+
+      if (i < steps) {
+        const c0 = 2 * i;
+        const c1 = 2 * i + 1;
+        const n0 = 2 * (i + 1);
+        const n1 = 2 * (i + 1) + 1;
+        ribbonIndices.push(c0, n0, c1, c1, n0, n1);
+      }
+    }
+
+    const densityRibbonGeo = new THREE.BufferGeometry();
+    densityRibbonGeo.setAttribute('position', new THREE.BufferAttribute(ribbonVerts, 3));
+    densityRibbonGeo.setAttribute('color', new THREE.BufferAttribute(ribbonColors, 3));
+    densityRibbonGeo.setIndex(ribbonIndices);
+    const densityRibbonMat = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.34,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    this.graphEnabled = Boolean(this.graphEnabled);
+    const densityRibbonMesh = new THREE.Mesh(densityRibbonGeo, densityRibbonMat);
+    densityRibbonMesh.renderOrder = 4;
+    densityRibbonMesh.frustumCulled = false;
+    densityRibbonMesh.visible = this.graphEnabled;
+    this.scene.add(densityRibbonMesh);
+
+    const densityCrestGeo = new THREE.BufferGeometry();
+    densityCrestGeo.setAttribute('position', new THREE.BufferAttribute(crestVerts, 3));
+    densityCrestGeo.setAttribute('color', new THREE.BufferAttribute(crestColors, 3));
+    densityCrestGeo.setIndex(ribbonIndices);
+    const densityCrestMat = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.92,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const densityCrestMesh = new THREE.Mesh(densityCrestGeo, densityCrestMat);
+    densityCrestMesh.renderOrder = 5;
+    densityCrestMesh.frustumCulled = false;
+    densityCrestMesh.visible = this.graphEnabled;
+    this.scene.add(densityCrestMesh);
+
+    const baseLineGeo = new THREE.BufferGeometry();
+    baseLineGeo.setAttribute('position', new THREE.BufferAttribute(baseLineVerts, 3));
+    const baseLineMat = new THREE.LineBasicMaterial({
+      color: 0x8b9bb4,
+      transparent: true,
+      opacity: 0.25,
+      depthWrite: false,
+    });
+    const densityBaseLine = new THREE.Line(baseLineGeo, baseLineMat);
+    densityBaseLine.renderOrder = 3;
+    densityBaseLine.frustumCulled = false;
+    densityBaseLine.visible = this.graphEnabled;
+    this.scene.add(densityBaseLine);
+
+    this.graphBasePos = graphBasePos;
+    this.densityRibbonGeo = densityRibbonGeo;
+    this.densityCrestGeo = densityCrestGeo;
+    this.densityRibbonMesh = densityRibbonMesh;
+    this.densityCrestMesh = densityCrestMesh;
+    this.densityBaseLine = densityBaseLine;
 
     // 2. Concrete Deck Underside & Side Coping
     const deckGeo = new THREE.BufferGeometry();
@@ -1127,8 +1564,10 @@ export class Renderer3D {
 
     const gantrySpan = width + 1.6;
     const gantryLegGeo = _cyl(0.24, 0.28, 7.6, 8);
-    const gantryBeamGeo = _bbox(0.45, 0.55, gantrySpan + 0.6);
-    const signBackingGeo = _bbox(0.14, 2.4, 13.5);
+    // Steel beam sits inside the signboard cabinet (-0.16m..+0.16m) so it never blocks front or back signs
+    const gantryBeamGeo = _bbox(0.32, 0.42, gantrySpan + 0.6);
+    // Double-sided signboard cabinet (-0.30m..+0.30m) encloses the central beam cleanly
+    const signBackingGeo = _bbox(0.60, 2.4, 13.5);
     const signFaceGeo = new THREE.PlaneGeometry(13.2, 2.25);
 
     for (const gSpec of gantrySpecs) {
@@ -1143,27 +1582,38 @@ export class Renderer3D {
       }
 
       // Overhead horizontal truss beam
-      localMat.makeTranslation(0, 7.3, 0);
+      localMat.makeTranslation(0, 7.35, 0);
       itemMat.multiplyMatrices(centerFrame, localMat);
       steelGeos.push(_tm(gantryBeamGeo, itemMat));
 
-      // Signboard backing box
+      // Signboard backing cabinet wrapping cleanly outside the beam on both front and back
       localMat.makeTranslation(0, 7.35, 0);
       itemMat.multiplyMatrices(centerFrame, localMat);
       darkMetalGeos.push(_tm(signBackingGeo, itemMat));
 
-      // Textured highway sign face (facing oncoming traffic: -X local normal, shaded with scene lighting)
+      // Textured highway sign faces on BOTH Front (-X) and Back (+X), completely clear of the arch beam
       const signTex = _createHighwaySignTexture(gSpec.title, gSpec.sub, gSpec.speed);
       const signMat = new THREE.MeshLambertMaterial({ map: signTex, color: 0xc8d0d8 });
-      const signMesh = new THREE.Mesh(signFaceGeo, signMat);
-      signMesh.castShadow = true;
-      signMesh.receiveShadow = true;
 
-      const rotY = new THREE.Matrix4().makeRotationY(-Math.PI / 2);
-      localMat.makeTranslation(-0.09, 7.35, 0).multiply(rotY);
+      // Front sign face (facing oncoming traffic: -X local normal at x = -0.32m)
+      const frontSignMesh = new THREE.Mesh(signFaceGeo, signMat);
+      frontSignMesh.castShadow = true;
+      frontSignMesh.receiveShadow = true;
+      const rotFront = new THREE.Matrix4().makeRotationY(-Math.PI / 2);
+      localMat.makeTranslation(-0.32, 7.35, 0).multiply(rotFront);
       itemMat.multiplyMatrices(centerFrame, localMat);
-      signMesh.applyMatrix4(itemMat);
-      this.scene.add(signMesh);
+      frontSignMesh.applyMatrix4(itemMat);
+      this.scene.add(frontSignMesh);
+
+      // Back sign face (facing rear camera view: +X local normal at x = +0.32m)
+      const backSignMesh = new THREE.Mesh(signFaceGeo, signMat);
+      backSignMesh.castShadow = true;
+      backSignMesh.receiveShadow = true;
+      const rotBack = new THREE.Matrix4().makeRotationY(Math.PI / 2);
+      localMat.makeTranslation(0.32, 7.35, 0).multiply(rotBack);
+      itemMat.multiplyMatrices(centerFrame, localMat);
+      backSignMesh.applyMatrix4(itemMat);
+      this.scene.add(backSignMesh);
     }
 
     // 5e. Roadside Diamond Curve Warning & Speed Signs (every 55m on outer edges, muted & shaded)
@@ -1360,19 +1810,30 @@ export class Renderer3D {
     const speedSum = this._hmSpeedSum || (this._hmSpeedSum = new Float32Array(B));
     const minSpeed = this._hmMinSpeed || (this._hmMinSpeed = new Float32Array(B));
     const counts = this._hmCounts || (this._hmCounts = new Uint16Array(B));
+    const floatCounts = this._hmFloatCounts || (this._hmFloatCounts = new Float32Array(B));
+    const blurBufA = this._hmBlurA || (this._hmBlurA = new Float32Array(B));
+    const blurBufB = this._hmBlurB || (this._hmBlurB = new Float32Array(B));
     const rawScore = this._hmRawScore || (this._hmRawScore = new Float32Array(B));
 
     speedSum.fill(0);
     minSpeed.fill(Infinity);
     counts.fill(0);
+    floatCounts.fill(0);
 
     for (const car of vehicles) {
-      let b = Math.floor((car.s / totalLen) * B);
+      const pos = ((car.s / totalLen) * B + B) % B;
+      let b = Math.floor(pos);
       if (b < 0) b = 0;
       else if (b >= B) b = B - 1;
       speedSum[b] += car.v;
       if (car.v < minSpeed[b]) minSpeed[b] = car.v;
       counts[b]++;
+
+      // Continuous linear splatting across neighboring bins so car movement never causes step jumps
+      const b1 = (b + 1) % B;
+      const frac = pos - Math.floor(pos);
+      floatCounts[b] += 1.0 - frac;
+      floatCounts[b1] += frac;
     }
 
     const refSpeed = (params?.v0 || 28) * 0.62;
@@ -1385,10 +1846,30 @@ export class Renderer3D {
         const effectiveV = avgV * 0.55 + minSpeed[b] * 0.45;
         rawScore[b] = Math.max(0.0, Math.min(1.0, effectiveV / refSpeed));
       }
+      blurBufA[b] = floatCounts[b];
+    }
+
+    // Multi-pass circular Gaussian smoothing for the population graph (6 passes -> wide, silky wave profile)
+    for (let pass = 0; pass < 6; pass++) {
+      const src = pass % 2 === 0 ? blurBufA : blurBufB;
+      const dst = pass % 2 === 0 ? blurBufB : blurBufA;
+      for (let b = 0; b < B; b++) {
+        const bm2 = (b - 2 + B) % B;
+        const bm1 = (b - 1 + B) % B;
+        const bp1 = (b + 1) % B;
+        const bp2 = (b + 2 + B) % B;
+        dst[b] =
+          src[bm2] * 0.08 +
+          src[bm1] * 0.24 +
+          src[b]   * 0.36 +
+          src[bp1] * 0.24 +
+          src[bp2] * 0.08;
+      }
     }
 
     // Spatial 5-tap circular smoothing + temporal smoothing for organic wave motion
     const alpha = Math.min(1.0, (dt || 0.016) * 6.0);
+    const alphaGraph = Math.min(1.0, (dt || 0.016) * 3.0);
     for (let b = 0; b < B; b++) {
       const bm2 = (b - 2 + B) % B;
       const bm1 = (b - 1 + B) % B;
@@ -1401,12 +1882,28 @@ export class Renderer3D {
         rawScore[bp1] * 0.23 +
         rawScore[bp2] * 0.12;
       this.heatmapSmooth[b] += (spatial - this.heatmapSmooth[b]) * alpha;
+
+      if (this.densitySmooth) {
+        this.densitySmooth[b] += (blurBufA[b] - this.densitySmooth[b]) * alphaGraph;
+      }
     }
 
     const colorAttr = this.roadGeometry.attributes.color;
     const arr = colorAttr.array;
     const steps = this.roadSteps;
     const tmpCol = this._hmColor || (this._hmColor = new THREE.Color());
+    const topCol = this._hmTopColor || (this._hmTopColor = new THREE.Color());
+    const botCol = this._hmBotColor || (this._hmBotColor = new THREE.Color());
+
+    const rPosAttr = this.densityRibbonGeo ? this.densityRibbonGeo.attributes.position : null;
+    const rColAttr = this.densityRibbonGeo ? this.densityRibbonGeo.attributes.color : null;
+    const cPosAttr = this.densityCrestGeo ? this.densityCrestGeo.attributes.position : null;
+    const cColAttr = this.densityCrestGeo ? this.densityCrestGeo.attributes.color : null;
+    const rPos = rPosAttr ? rPosAttr.array : null;
+    const rCol = rColAttr ? rColAttr.array : null;
+    const cPos = cPosAttr ? cPosAttr.array : null;
+    const cCol = cColAttr ? cColAttr.array : null;
+    const basePos = this.graphBasePos;
 
     for (let i = 0; i <= steps; i++) {
       const posFrac = (i / steps) * B;
@@ -1428,9 +1925,61 @@ export class Renderer3D {
       arr[idx + 3] = tmpCol.r;
       arr[idx + 4] = tmpCol.g;
       arr[idx + 5] = tmpCol.b;
+
+      // Update 3D # of cars graph over the road (height = # of cars, colored by road heatmap, Catmull-Rom spline smoothed)
+      if (this.graphEnabled && rPos && rCol && cPos && cCol && basePos && this.densitySmooth) {
+        const bm1 = (b0 - 1 + B) % B;
+        const bp2 = (b1 + 1) % B;
+        const p0 = this.densitySmooth[bm1];
+        const p1 = this.densitySmooth[b0];
+        const p2 = this.densitySmooth[b1];
+        const p3 = this.densitySmooth[bp2];
+        const t2 = t * t;
+        const t3 = t2 * t;
+        const carCount = Math.max(
+          0.0,
+          0.5 *
+            (2.0 * p1 +
+              (-p0 + p2) * t +
+              (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2 +
+              (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
+        );
+        const excess = Math.max(0.0, carCount - 1.1);
+        const graphH = Math.max(0.8, Math.min(48.0, carCount * 4.5 + Math.pow(excess, 1.45) * 4.2));
+        const baseY = basePos[i * 3 + 1];
+
+        rPos[idx + 1] = baseY;
+        rPos[idx + 4] = baseY + graphH;
+
+        cPos[idx + 1] = baseY + Math.max(0.0, graphH - 0.28);
+        cPos[idx + 4] = baseY + graphH + 0.28;
+
+        botCol.setHSL(hue, 0.78, 0.22);
+        topCol.setHSL(hue, 0.95, 0.56);
+
+        rCol[idx]     = botCol.r;
+        rCol[idx + 1] = botCol.g;
+        rCol[idx + 2] = botCol.b;
+        rCol[idx + 3] = topCol.r;
+        rCol[idx + 4] = topCol.g;
+        rCol[idx + 5] = topCol.b;
+
+        cCol[idx]     = topCol.r;
+        cCol[idx + 1] = topCol.g;
+        cCol[idx + 2] = topCol.b;
+        cCol[idx + 3] = topCol.r;
+        cCol[idx + 4] = topCol.g;
+        cCol[idx + 5] = topCol.b;
+      }
     }
 
     colorAttr.needsUpdate = true;
+    if (this.graphEnabled && rPosAttr && rColAttr && cPosAttr && cColAttr) {
+      rPosAttr.needsUpdate = true;
+      rColAttr.needsUpdate = true;
+      cPosAttr.needsUpdate = true;
+      cColAttr.needsUpdate = true;
+    }
 
     // Locate the primary Congestion Center (lowest smoothed speed bin) and Green Flow Center (highest smoothed speed bin)
     const frameDt = Math.min(0.1, dt || 0.016);
@@ -1455,8 +2004,8 @@ export class Renderer3D {
     }
     const minVal = this.heatmapSmooth[minBin];
 
-    // Measure contiguous congested bins around minBin (threshold < 0.68)
-    const jamThreshold = 0.68;
+    // Measure contiguous congested bins around minBin (threshold < 0.52 = red/orange only, never green)
+    const jamThreshold = 0.52;
     let spanBins = 0;
     let sumWeightedS = 0;
     let sumWeight = 0;
@@ -1478,19 +2027,20 @@ export class Renderer3D {
         ? ((sumWeightedS / sumWeight) % totalLen + totalLen) % totalLen
         : centerRefS;
 
-    if (this.jamCenterS === undefined) {
+    if (this.jamCenterS === undefined || !this.jamStats?.active) {
       this.jamCenterS = targetJamS;
+      this._smoothBeaconS = targetJamS;
     } else {
       let diff = targetJamS - this.jamCenterS;
       if (diff > totalLen / 2) diff -= totalLen;
       if (diff < -totalLen / 2) diff += totalLen;
       // Rate-limit and smoothly damp circular road coordinate s
-      const maxStep = 26.0 * frameDt;
+      const maxStep = 22.0 * frameDt;
       const dampedStep = Math.max(-maxStep, Math.min(maxStep, diff * Math.min(1.0, frameDt * 1.8)));
       this.jamCenterS = (this.jamCenterS + dampedStep + totalLen) % totalLen;
     }
 
-    // Gather live vehicle stats inside the congestion wave
+    // Gather live vehicle stats inside the congestion wave (strictly slow vehicles < 9.0 m/s)
     const jamWindowRadius = Math.max(45.0, spanBins * binLen * 0.6);
     let queuedCars = 0;
     let speedAccum = 0;
@@ -1499,67 +2049,137 @@ export class Renderer3D {
     for (const car of vehicles) {
       let ds = Math.abs(car.s - this.jamCenterS);
       if (ds > totalLen / 2) ds = totalLen - ds;
-      if (ds <= jamWindowRadius && (car.v < 11.0 || car.braking)) {
+      if (ds <= jamWindowRadius && car.v < 9.0) {
         queuedCars++;
         speedAccum += car.v;
         if (car.v < slowestInJam) slowestInJam = car.v;
       }
     }
 
-    const isJamActive = queuedCars >= 2 && minVal < 0.78;
+    // Require genuine red/orange congestion (minVal < 0.50 and slow queued cars) so circle never wanders on green road
+    const isJamActive = queuedCars >= 3 && minVal < 0.50 && slowestInJam < 6.5;
     this.jamStats = {
       active: isJamActive,
       queuedCars,
       coreSpeed: isFinite(slowestInJam) ? slowestInJam : 0,
       avgJamSpeed: queuedCars > 0 ? speedAccum / queuedCars : 0,
-      waveLength: Math.round(Math.max(spanBins * binLen, queuedCars * 2.8)),
+      waveLength: Math.round(Math.max(spanBins * binLen, (queuedCars / 5) * 6.5)),
       minVal,
     };
 
-    // Smoothly position and orient the 3D Congestion Center beacon to the sloped road tarmac
-    const updateBeaconTransform = (marker, sCoord, isActive, worldPosKey, surfQuatKey, phaseOffset) => {
+    // Smoothly position the 3D Congestion Center beacon and conform its glowing circle to the curved tarmac under the tires
+    const updateBeaconTransform = (marker, sCoord, isActive, worldPosKey, phaseOffset) => {
       if (!marker) return;
       marker.visible = isActive;
-      const pt = getPointAtS(road, sCoord);
-      const targetPos = new THREE.Vector3(pt.x, pt.z, pt.y);
+      const { discMesh, discGeo, baseOffsets } = marker.userData;
+      if (discMesh) discMesh.visible = isActive;
+      if (!isActive) return;
 
+      if (this._smoothBeaconS === undefined) {
+        this._smoothBeaconS = sCoord;
+      } else {
+        let ds = sCoord - this._smoothBeaconS;
+        if (ds > totalLen * 0.5) ds -= totalLen;
+        if (ds < -totalLen * 0.5) ds += totalLen;
+        this._smoothBeaconS = (this._smoothBeaconS + ds * Math.min(1.0, frameDt * 5.0) + totalLen) % totalLen;
+      }
+
+      const centerPt = getPointAtS(road, this._smoothBeaconS);
+      const targetPos = new THREE.Vector3(centerPt.x, centerPt.z, centerPt.y);
       if (!this[worldPosKey]) {
         this[worldPosKey] = targetPos.clone();
       } else {
-        this[worldPosKey].lerp(targetPos, Math.min(1.0, frameDt * 5.0));
+        this[worldPosKey].copy(targetPos);
       }
       marker.position.copy(this[worldPosKey]);
 
-      // Align the tarmac highlight circle with the 3D road tangent & surface normal
-      const fVec = new THREE.Vector3(pt.tx, pt.tz, pt.ty).normalize();
-      const uRef = new THREE.Vector3(0, 1, 0);
-      const rVec = new THREE.Vector3().crossVectors(fVec, uRef).normalize();
-      const uVec = new THREE.Vector3().crossVectors(rVec, fVec).normalize();
-      const rotMat = new THREE.Matrix4().makeBasis(fVec, uVec, rVec);
-      const targetQuat = new THREE.Quaternion().setFromRotationMatrix(rotMat);
+      if (discGeo && baseOffsets) {
+        const tNow = performance.now() * 0.001 + phaseOffset;
+        const pulse = 1.0 + Math.sin(tNow * 3.2) * 0.05;
+        const posAttr = discGeo.attributes.position;
+        const colAttr = discGeo.attributes.color;
+        const arr = posAttr.array;
+        const cArr = colAttr ? colAttr.array : null;
+        const count = posAttr.count;
 
-      if (!this[surfQuatKey]) {
-        this[surfQuatKey] = targetQuat.clone();
-      } else {
-        this[surfQuatKey].slerp(targetQuat, Math.min(1.0, frameDt * 6.0));
-      }
+        for (let i = 0; i < count; i++) {
+          const dForward = baseOffsets[i * 2] * pulse;
+          const dLat = baseOffsets[i * 2 + 1] * pulse;
+          const vS = (this._smoothBeaconS + dForward + totalLen) % totalLen;
+          const pt = getPointAtS(road, vS);
+          const px = -pt.ty;
+          const pz = pt.tx;
+          const plen = Math.hypot(px, pz) || 1;
+          const nx = px / plen;
+          const nz = pz / plen;
 
-      const { surfaceGroup, ringMesh, innerRingMesh, pointerCone } = marker.userData;
-      if (surfaceGroup) {
-        surfaceGroup.quaternion.copy(this[surfQuatKey]);
-      }
+          const idx = i * 3;
+          arr[idx]     = pt.x + nx * dLat;
+          arr[idx + 1] = pt.z + 0.032; // 3.2cm above asphalt, right beneath car tires (0.05m)
+          arr[idx + 2] = pt.y + nz * dLat;
 
-      const tNow = performance.now() * 0.001 + phaseOffset;
-      const pulse = 1.0 + Math.sin(tNow * 3.2) * 0.055;
-      if (ringMesh) ringMesh.scale.set(pulse, 1, pulse);
-      if (innerRingMesh) innerRingMesh.scale.set(2.0 - pulse, 1, 2.0 - pulse);
-      if (pointerCone) {
-        pointerCone.position.y = 9.3 + Math.sin(tNow * 3.0) * 0.45;
-        pointerCone.rotation.y = tNow * 1.5;
+          if (cArr) {
+            const posFrac = (vS / totalLen) * B;
+            const b0 = Math.floor(posFrac) % B;
+            const b1 = (b0 + 1) % B;
+            const t = posFrac - Math.floor(posFrac);
+            const vVal = this.heatmapSmooth[b0] * (1 - t) + this.heatmapSmooth[b1] * t;
+            // Match road heatmap hue (0.00 crimson -> 0.12 amber -> 0.36 emerald)
+            tmpCol.setHSL(vVal * 0.36, 0.94 - vVal * 0.12, 0.52 - vVal * 0.05);
+            cArr[idx]     = tmpCol.r;
+            cArr[idx + 1] = tmpCol.g;
+            cArr[idx + 2] = tmpCol.b;
+          }
+        }
+        posAttr.needsUpdate = true;
+        if (colAttr) colAttr.needsUpdate = true;
       }
     };
 
-    updateBeaconTransform(this.jamMarker, this.jamCenterS, isJamActive, '_jamWorldPos', '_jamSurfQuat', 0.0);
+    updateBeaconTransform(this.jamMarker, this.jamCenterS, isJamActive, '_jamWorldPos', 0.0);
+
+    // Update the 3D Hexagonal Pipe Congestion Tunnel uniforms (length = waveLength, pipes thickest at circle)
+    if (this.tunnelMesh) {
+      this.tunnelMesh.visible = Boolean(this.hexagonsEnabled) && isJamActive;
+    }
+    if (this.tunnelUniforms && this.hexagonsEnabled) {
+      const targetLen = isJamActive ? Math.max(40, this.jamStats.waveLength) : 0;
+      if (this._smoothTunnelLen === undefined) {
+        this._smoothTunnelLen = targetLen;
+      } else {
+        this._smoothTunnelLen += (targetLen - this._smoothTunnelLen) * Math.min(1.0, frameDt * 3.5);
+      }
+
+      const centerS = this._smoothBeaconS !== undefined ? this._smoothBeaconS : this.jamCenterS;
+      const severityBoost = Math.min(1.0, Math.max(0.85, (0.82 - minVal) / 0.45));
+
+      this.tunnelUniforms.uCenterS.value = centerS;
+      this.tunnelUniforms.uHalfWaveLen.value = this._smoothTunnelLen * 0.5;
+      this.tunnelUniforms.uTotalLen.value = totalLen;
+      this.tunnelUniforms.uSeverity.value = severityBoost;
+    }
+  }
+
+  /**
+   * Toggles the 3D Hexagonal Pipe Congestion Tunnel ON or OFF (default OFF, toggled with keystroke H)
+   */
+  setHexagonsEnabled(enabled) {
+    this.hexagonsEnabled = Boolean(enabled);
+    if (this.tunnelMesh) {
+      this.tunnelMesh.visible = this.hexagonsEnabled && Boolean(this.jamStats?.active);
+    }
+    return this.hexagonsEnabled;
+  }
+
+  /**
+   * Toggles the 3D Vehicle-Count Population Graph ON or OFF (default OFF, toggled with keystroke G)
+   */
+  setGraphEnabled(enabled) {
+    this.graphEnabled = Boolean(enabled);
+    if (this.densityRibbonMesh) this.densityRibbonMesh.visible = this.graphEnabled;
+    if (this.densityCrestMesh) this.densityCrestMesh.visible = this.graphEnabled;
+    if (this.densityBaseLine) this.densityBaseLine.visible = this.graphEnabled;
+    return this.graphEnabled;
   }
 
   /**
@@ -1576,24 +2196,31 @@ export class Renderer3D {
     // Preserve at least the category IDM length so traffic density stays in the critical phantom-jam regime
     car.length = Math.max(car.length, tpl.length);
 
-    for (const part of tpl.parts) {
+    for (let pIdx = 0; pIdx < tpl.parts.length; pIdx++) {
+      const part = tpl.parts[pIdx];
       const mesh = new THREE.Mesh(part.geometry, part.material);
-      mesh.castShadow = true;
+      // Primary vehicle body (pIdx === 0) casts directional shadow; skip tiny trim sub-meshes to double shadow FPS
+      mesh.castShadow = pIdx === 0;
+      mesh.matrixAutoUpdate = false;
       group.add(mesh);
     }
 
     // Soft ambient-occlusion contact shadow directly under the car
     const contactShadow = new THREE.Mesh(tpl.shadowGeo, _CONTACT_SHADOW_MAT);
+    contactShadow.matrixAutoUpdate = false;
     group.add(contactShadow);
 
     const brakeMesh = new THREE.Mesh(tpl.brakeGeo, _BRAKE_ON_MAT);
     brakeMesh.visible = false;
+    brakeMesh.matrixAutoUpdate = false;
     group.add(brakeMesh);
 
     const leftBlinker = new THREE.Mesh(tpl.leftBlinkGeo, _BLINKER_MAT);
     const rightBlinker = new THREE.Mesh(tpl.rightBlinkGeo, _BLINKER_MAT);
     leftBlinker.visible = false;
     rightBlinker.visible = false;
+    leftBlinker.matrixAutoUpdate = false;
+    rightBlinker.matrixAutoUpdate = false;
     group.add(leftBlinker, rightBlinker);
 
     group.userData = {
@@ -1608,18 +2235,18 @@ export class Renderer3D {
   _getDesiredCameraState(dt = 0.016) {
     if (this.cameraMode === 'top') {
       return {
-        pos: new THREE.Vector3(0, 260, 0.01),
+        pos: new THREE.Vector3(0, 310, 0.01),
         target: new THREE.Vector3(0, 0, 0),
       };
     }
 
     if (this.cameraMode === 'default') {
       this._defaultOrbitAngle = (this._defaultOrbitAngle ?? Math.atan2(100, -230)) + dt * 0.09;
-      const radius = 250.8;
+      const radius = 285.0;
       return {
         pos: new THREE.Vector3(
           Math.cos(this._defaultOrbitAngle) * radius,
-          90,
+          105,
           Math.sin(this._defaultOrbitAngle) * radius
         ),
         target: new THREE.Vector3(0, 5, 0),
@@ -2076,64 +2703,119 @@ export class Renderer3D {
 
   render() {
     this.controls.update();
+    if (this.scene.fog) {
+      const distToOrigin = Math.hypot(this.camera.position.x, this.camera.position.z);
+      const fogOffset = this.lightTuning?.fogStartDist ?? 500;
+      this.scene.fog.near = distToOrigin + fogOffset;
+      this.scene.fog.far = this.scene.fog.near + 420;
+    }
+    this._renderTick = (this._renderTick + 1) | 0;
+    if ((this._renderTick & 1) === 0) {
+      this.renderer.shadowMap.needsUpdate = true;
+    }
     this.renderer.render(this.scene, this.camera);
     this._updateJamCalloutOverlay();
   }
 
   _updateJamCalloutOverlay() {
     const jamCallout = this._calloutEl || (this._calloutEl = document.getElementById('jam-callout'));
+    const leaderSvg = this._leaderSvgEl || (this._leaderSvgEl = document.getElementById('jam-leader-svg'));
     if (!jamCallout) return;
 
     if (!this.jamStats || !this.jamStats.active || !this.jamMarker) {
       jamCallout.style.opacity = '0';
+      if (leaderSvg) leaderSvg.style.opacity = '0';
       return;
     }
 
     const w = this.canvas.clientWidth || window.innerWidth;
     const h = this.canvas.clientHeight || window.innerHeight;
-    const projVec = this._tmpProjVec || (this._tmpProjVec = new THREE.Vector3());
+    const projTop = this._tmpProjVec || (this._tmpProjVec = new THREE.Vector3());
+    const projBase = this._tmpProjBase || (this._tmpProjBase = new THREE.Vector3());
 
-    projVec.copy(this.jamMarker.position);
-    projVec.y += 11.4; // anchor right above the 3D pointer cone
-    projVec.project(this.camera);
+    // Project tarmac circle center
+    projBase.copy(this.jamMarker.position);
+    projBase.y += 0.35;
+    projBase.project(this.camera);
 
-    if (projVec.z > 1.0) {
+    // Project callout anchor above the tunnel
+    projTop.copy(this.jamMarker.position);
+    projTop.y += 11.2;
+    projTop.project(this.camera);
+
+    if (projTop.z > 1.0 || projBase.z > 1.0) {
       jamCallout.style.opacity = '0';
+      if (leaderSvg) leaderSvg.style.opacity = '0';
       return;
     }
 
-    const rawX = Math.max(155, Math.min(w - 155, (projVec.x * 0.5 + 0.5) * w));
-    const rawY = Math.max(115, Math.min(h - 40, (-projVec.y * 0.5 + 0.5) * h));
+    const rawBaseX = (projBase.x * 0.5 + 0.5) * w;
+    const rawBaseY = (-projBase.y * 0.5 + 0.5) * h;
+    const rawCardX = Math.max(155, Math.min(w - 155, (projTop.x * 0.5 + 0.5) * w));
+    const rawCardY = Math.max(115, Math.min(h - 55, (-projTop.y * 0.5 + 0.5) * h - 18));
 
     if (!this._jamScreenPos) {
-      this._jamScreenPos = { x: rawX, y: rawY };
+      this._jamScreenPos = { x: rawCardX, y: rawCardY, bx: rawBaseX, by: rawBaseY };
     } else {
-      this._jamScreenPos.x += (rawX - this._jamScreenPos.x) * 0.14;
-      this._jamScreenPos.y += (rawY - this._jamScreenPos.y) * 0.14;
+      this._jamScreenPos.x += (rawCardX - this._jamScreenPos.x) * 0.14;
+      this._jamScreenPos.y += (rawCardY - this._jamScreenPos.y) * 0.14;
+      this._jamScreenPos.bx += (rawBaseX - this._jamScreenPos.bx) * 0.18;
+      this._jamScreenPos.by += (rawBaseY - this._jamScreenPos.by) * 0.18;
     }
 
+    const { x, y, bx, by } = this._jamScreenPos;
     jamCallout.style.opacity = '1';
-    jamCallout.style.left = `${this._jamScreenPos.x.toFixed(1)}px`;
-    jamCallout.style.top = `${this._jamScreenPos.y.toFixed(1)}px`;
+    jamCallout.style.left = `${x.toFixed(1)}px`;
+    jamCallout.style.top = `${y.toFixed(1)}px`;
+
+    if (leaderSvg) {
+      leaderSvg.style.opacity = '1';
+      const lineEl = this._leaderLineEl || (this._leaderLineEl = document.getElementById('jam-leader-line'));
+      const dashEl = this._leaderDashEl || (this._leaderDashEl = document.getElementById('jam-leader-dash'));
+      const ringEl = this._leaderRingEl || (this._leaderRingEl = document.getElementById('jam-anchor-ring'));
+      const dotEl = this._leaderDotEl || (this._leaderDotEl = document.getElementById('jam-anchor-dot'));
+
+      if (lineEl) {
+        lineEl.setAttribute('x1', x.toFixed(1));
+        lineEl.setAttribute('y1', y.toFixed(1));
+        lineEl.setAttribute('x2', bx.toFixed(1));
+        lineEl.setAttribute('y2', by.toFixed(1));
+      }
+      if (dashEl) {
+        dashEl.setAttribute('x1', x.toFixed(1));
+        dashEl.setAttribute('y1', y.toFixed(1));
+        dashEl.setAttribute('x2', bx.toFixed(1));
+        dashEl.setAttribute('y2', by.toFixed(1));
+        dashEl.setAttribute('stroke-dashoffset', `${-((performance.now() * 0.025) % 20).toFixed(1)}`);
+      }
+      if (ringEl) {
+        ringEl.setAttribute('cx', bx.toFixed(1));
+        ringEl.setAttribute('cy', by.toFixed(1));
+      }
+      if (dotEl) {
+        dotEl.setAttribute('cx', bx.toFixed(1));
+        dotEl.setAttribute('cy', by.toFixed(1));
+      }
+    }
 
     // Throttle DOM text updates to ~10 Hz
     const now = performance.now();
     if (!this._lastCalloutTextUpdate || now - this._lastCalloutTextUpdate > 100) {
       this._lastCalloutTextUpdate = now;
 
-      const { queuedCars, coreSpeed, waveLength } = this.jamStats;
+      const { queuedCars, avgJamSpeed, waveLength } = this.jamStats;
       const carsEl = document.getElementById('jam-stat-cars');
       const speedEl = document.getElementById('jam-stat-speed');
       const lenEl = document.getElementById('jam-stat-len');
       const sevEl = document.getElementById('jam-severity');
 
       if (carsEl) carsEl.textContent = `${queuedCars} cars`;
-      if (speedEl) speedEl.textContent = `${coreSpeed.toFixed(1)} m/s`;
+      if (speedEl) speedEl.textContent = `${avgJamSpeed.toFixed(1)} m/s`;
       if (lenEl) lenEl.textContent = `${waveLength} m`;
       if (sevEl) {
-        if (coreSpeed < 1.0 || queuedCars >= 35) {
+        if (avgJamSpeed < 2.2) {
           sevEl.textContent = 'GRIDLOCK';
-        } else if (coreSpeed < 4.0 || queuedCars >= 18) {
+        } else if (avgJamSpeed < 4.5) {
           sevEl.textContent = 'SEVERE';
         } else {
           sevEl.textContent = 'MODERATE';

@@ -119,12 +119,29 @@ export function createVehicles(count, totalLength, params) {
     }
   }
 
-  // One hard-brake seed per lane, staggered so phantom waves form and propagate cleanly
+  // Nucleate a coherent congestion wave around a single road location right at startup
+  const seedTargetS = totalLength * 0.22;
   for (let lane = 0; lane < NUM_LANES; lane++) {
     const inLane = vehicles.filter(c => c.lane === lane);
     if (inLane.length > 2) {
-      const seed = inLane[Math.floor(inLane.length / 2)]; // middle car
-      seed.perturbTimer = 3.0 + lane * 1.5; // fires early to nucleate stop-and-go waves
+      let bestCar = inLane[0];
+      let bestDist = Infinity;
+      for (const c of inLane) {
+        let ds = Math.abs(c.s - seedTargetS);
+        if (ds > totalLength * 0.5) ds = totalLength - ds;
+        if (ds < bestDist) {
+          bestDist = ds;
+          bestCar = c;
+        }
+        // Pre-seed initial slowdown in the 30m upstream of seedTargetS so a red jam exists at t=0
+        let upstreamDist = (seedTargetS - c.s + totalLength) % totalLength;
+        if (upstreamDist < 32.0) {
+          c.v = params.v0 * (0.08 + 0.35 * (upstreamDist / 32.0));
+          c.braking = true;
+        }
+      }
+      bestCar.v = 1.5;
+      bestCar.perturbTimer = 2.4; // fires immediately at t=0
     }
   }
 

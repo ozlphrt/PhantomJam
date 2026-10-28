@@ -7,7 +7,7 @@ import { DEFAULT_PARAMS, createVehicles, stepVehicles } from './idm.js';
 import { Renderer3D } from './renderer3d.js';
 const MAX_PHYSICS_DT = 1 / 60; // sub-step ceiling so physics updates smoothly every frame
 
-const road = buildRoad(110, 800);
+const road = buildRoad(158, 800);
 
 let params = { ...DEFAULT_PARAMS };
 let vehicles = [];
@@ -165,6 +165,53 @@ document.getElementById('btn-reset').addEventListener('click', () => {
 const btnJam = document.getElementById('btn-jam');
 if (btnJam) btnJam.addEventListener('click', () => triggerJam());
 
+// Lighting & Atmosphere Sliders + Copy Tuning to Clipboard
+bindSlider('ctrl-key-int', 'disp-key-int', v => v.toFixed(2), v => {
+  renderer3d.updateLightTuning({ keyIntensity: v });
+});
+bindSlider('ctrl-sun-el', 'disp-sun-el', v => `${Math.round(v)}°`, v => {
+  renderer3d.updateLightTuning({ sunElevation: v });
+});
+bindSlider('ctrl-sun-az', 'disp-sun-az', v => `${Math.round(v)}°`, v => {
+  renderer3d.updateLightTuning({ sunAzimuth: v });
+});
+bindSlider('ctrl-hemi-int', 'disp-hemi-int', v => v.toFixed(2), v => {
+  renderer3d.updateLightTuning({ hemiIntensity: v });
+});
+bindSlider('ctrl-fill-int', 'disp-fill-int', v => v.toFixed(2), v => {
+  renderer3d.updateLightTuning({ fillIntensity: v });
+});
+bindSlider('ctrl-exposure', 'disp-exposure', v => v.toFixed(2), v => {
+  renderer3d.updateLightTuning({ exposure: v });
+});
+bindSlider('ctrl-fog-dist', 'disp-fog-dist', v => `${Math.round(v)}m`, v => {
+  renderer3d.updateLightTuning({ fogStartDist: v });
+});
+
+const btnCopyTuning = document.getElementById('btn-copy-tuning');
+if (btnCopyTuning) {
+  btnCopyTuning.addEventListener('click', async () => {
+    const payload = {
+      ...renderer3d.getLightTuning(),
+      vehicleCount,
+      simSpeed,
+      hexagonsEnabled: Boolean(renderer3d.hexagonsEnabled),
+      graphEnabled: Boolean(renderer3d.graphEnabled),
+    };
+    const jsonText = JSON.stringify(payload, null, 2);
+    try {
+      await navigator.clipboard.writeText(jsonText);
+      btnCopyTuning.textContent = '✓ Copied Tuning!';
+    } catch {
+      btnCopyTuning.textContent = '✓ Ready in Console';
+      console.log('Tuning JSON:\n', jsonText);
+    }
+    setTimeout(() => {
+      btnCopyTuning.textContent = '📋 Copy Tuning to Clipboard';
+    }, 2000);
+  });
+}
+
 // Camera Presets & Auto-Cycle (30s Jam Cam -> 5s Top-Down -> 10s Default Cam)
 const cameraModes = ['jam', 'top', 'default'];
 const cameraDurations = {
@@ -206,6 +253,50 @@ if (cameraCycleBtn) {
     applyCameraMode(cameraModes[nextIndex]);
   });
 }
+
+// Keystroke H toggles 3D Hexagonal Congestion Tunnel ON/OFF (starts OFF)
+// Keystroke G toggles 3D Population Graph ON/OFF (starts OFF)
+const hexHudBtn = document.getElementById('hex-hud');
+const hexHudState = document.getElementById('hex-hud-state');
+const graphHudBtn = document.getElementById('graph-hud');
+const graphHudState = document.getElementById('graph-hud-state');
+
+function toggleHexagons() {
+  const enabled = renderer3d.setHexagonsEnabled(!renderer3d.hexagonsEnabled);
+  if (hexHudBtn) {
+    hexHudBtn.classList.toggle('active', enabled);
+  }
+  if (hexHudState) {
+    hexHudState.textContent = enabled ? 'ON' : 'OFF';
+  }
+}
+
+function toggleGraph() {
+  const enabled = renderer3d.setGraphEnabled(!renderer3d.graphEnabled);
+  if (graphHudBtn) {
+    graphHudBtn.classList.toggle('active', enabled);
+  }
+  if (graphHudState) {
+    graphHudState.textContent = enabled ? 'ON' : 'OFF';
+  }
+}
+
+if (hexHudBtn) {
+  hexHudBtn.addEventListener('click', toggleHexagons);
+}
+if (graphHudBtn) {
+  graphHudBtn.addEventListener('click', toggleGraph);
+}
+
+window.addEventListener('keydown', e => {
+  if (e.repeat) return;
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+  if (e.key === 'h' || e.key === 'H') {
+    toggleHexagons();
+  } else if (e.key === 'g' || e.key === 'G') {
+    toggleGraph();
+  }
+});
 
 
 // Auto-hide sidebar logic
