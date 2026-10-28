@@ -1,0 +1,11 @@
+Model Information:
+* title:	Orchids Simulator Traffic Car Pack
+* source:	https://sketchfab.com/3d-models/orchids-simulator-traffic-car-pack-2fc5970d5ba2415fa98ec98b8801e794
+* author:	Oren garage (https://sketchfab.com/playmode280513)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Orchids Simulator Traffic Car Pack" (https://sketchfab.com/3d-models/orchids-simulator-traffic-car-pack-2fc5970d5ba2415fa98ec98b8801e794) by Oren garage (https://sketchfab.com/playmode280513) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

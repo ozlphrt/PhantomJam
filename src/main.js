@@ -5,7 +5,7 @@
 import { buildRoad } from './road.js';
 import { DEFAULT_PARAMS, createVehicles, stepVehicles } from './idm.js';
 import { Renderer3D } from './renderer3d.js';
-const DT = 0.05;         // 50 ms fixed physics step (20 Hz)
+const MAX_PHYSICS_DT = 1 / 60; // sub-step ceiling so physics updates smoothly every frame
 
 const road = buildRoad(110, 800);
 
@@ -13,7 +13,7 @@ let params = { ...DEFAULT_PARAMS };
 let vehicles = [];
 let paused = false;
 let simSpeed = 1.0;
-let vehicleCount = 150; // default to 150 vehicles
+let vehicleCount = 300; // default to 300 vehicles
 
 let frameCount = 0;
 let lastTime = 0;
@@ -46,8 +46,8 @@ function triggerJam() {
     const inLane = vehicles.filter(c => c.lane === lane);
     if (inLane.length > 0) {
       const picked = inLane[Math.floor(Math.random() * inLane.length)];
-      // Brake starts in 0.1 s and lasts 1.2 s
-      picked.perturbTimer = 1.3;
+      // Brake starts in 0.1 s and lasts 2.4 s (full-stop seed)
+      picked.perturbTimer = 2.5;
     }
   }
 }
@@ -81,18 +81,37 @@ function tick(now) {
 
   // Calculate FPS
   fpsFrames++;
-  if (now > fpsLastTime + 500) {
+  if (now > fpsLastTime + 250) {
     const fps = Math.round((fpsFrames * 1000) / (now - fpsLastTime));
     document.getElementById('val-fps').textContent = fps;
+    const hudVal = document.getElementById('fps-hud-val');
+    const hudDot = document.getElementById('fps-dot');
+    if (hudVal) hudVal.textContent = fps;
+    if (hudDot) {
+      const color = fps >= 50 ? 'var(--success)' : fps >= 30 ? 'var(--accent-2)' : 'var(--danger)';
+      hudDot.style.background = color;
+      hudDot.style.boxShadow = `0 0 8px ${color}`;
+    }
     fpsFrames = 0;
     fpsLastTime = now;
   }
 
   if (!paused) {
-    accumulator += dtWall * simSpeed;
-    while (accumulator >= DT) {
-      stepVehicles(vehicles, params, road, DT);
-      accumulator -= DT;
+    let remaining = dtWall * simSpeed;
+    while (remaining > 0) {
+      const stepDt = Math.min(remaining, MAX_PHYSICS_DT);
+      stepVehicles(vehicles, params, road, stepDt);
+      remaining -= stepDt;
+    }
+
+    // Auto-cycle camera: 30s Jam Cam -> 5s Top-Down -> 10s Default Cam
+    camAutoCycleTimer += dtWall;
+    const currentMode = renderer3d.cameraMode;
+    const modeDuration = cameraDurations[currentMode] || 15.0;
+    if (camAutoCycleTimer >= modeDuration) {
+      const currentIndex = cameraModes.indexOf(currentMode);
+      const nextIndex = (currentIndex + 1) % cameraModes.length;
+      applyCameraMode(cameraModes[nextIndex]);
     }
   }
 
@@ -146,40 +165,45 @@ document.getElementById('btn-reset').addEventListener('click', () => {
 const btnJam = document.getElementById('btn-jam');
 if (btnJam) btnJam.addEventListener('click', () => triggerJam());
 
-// Camera Presets wiring
-const cameraModes = ['default', 'jam', 'top'];
+// Camera Presets & Auto-Cycle (30s Jam Cam -> 5s Top-Down -> 10s Default Cam)
+const cameraModes = ['jam', 'top', 'default'];
+const cameraDurations = {
+  jam: 30.0,
+  top: 5.0,
+  default: 10.0,
+};
 const cameraLabels = {
-  'default': 'Default Cam',
-  'jam': 'Jam Cam',
-  'top': 'Top-Down'
+  default: 'Default Cam',
+  jam: 'Jam Cam',
+  top: 'Top-Down',
 };
 
 const cameraCycleBtn = document.getElementById('camera-cycle-btn');
 const camActiveName = document.getElementById('cam-active-name');
 let camLabelTimeout = null;
+let camAutoCycleTimer = 0;
+
+function applyCameraMode(mode) {
+  camAutoCycleTimer = 0;
+  renderer3d.setCameraPreset(mode, vehicles);
+  if (camActiveName) {
+    camActiveName.textContent = cameraLabels[mode];
+  }
+  if (cameraCycleBtn) {
+    cameraCycleBtn.classList.add('expanded');
+    if (camLabelTimeout) clearTimeout(camLabelTimeout);
+    camLabelTimeout = setTimeout(() => {
+      cameraCycleBtn.classList.remove('expanded');
+    }, 2200);
+  }
+}
 
 if (cameraCycleBtn) {
   cameraCycleBtn.addEventListener('click', () => {
     const currentMode = renderer3d.cameraMode;
     const currentIndex = cameraModes.indexOf(currentMode);
     const nextIndex = (currentIndex + 1) % cameraModes.length;
-    const nextMode = cameraModes[nextIndex];
-    
-    renderer3d.setCameraPreset(nextMode, vehicles);
-    if (camActiveName) {
-      camActiveName.textContent = cameraLabels[nextMode];
-      
-      // Expand capsule to show the name
-      cameraCycleBtn.classList.add('expanded');
-      
-      // Reset previous auto-collapse timeout
-      if (camLabelTimeout) clearTimeout(camLabelTimeout);
-      
-      // Collapse back into a circle after 2 seconds
-      camLabelTimeout = setTimeout(() => {
-        cameraCycleBtn.classList.remove('expanded');
-      }, 2000);
-    }
+    applyCameraMode(cameraModes[nextIndex]);
   });
 }
 

@@ -90,16 +90,22 @@ export function getPointAtS(road, s) {
   const N = points.length;
   s = ((s % totalLength) + totalLength) % totalLength;
 
-  let lo = 0, hi = N - 1;
-  while (lo + 1 < hi) {
-    const mid = (lo + hi) >> 1;
-    if (points[mid].s <= s) lo = mid;
-    else hi = mid;
+  let a, b, segmentLength;
+  if (s >= points[N - 1].s) {
+    a = points[N - 1];
+    b = points[0];
+    segmentLength = (totalLength - a.s) || 1;
+  } else {
+    let lo = 0, hi = N - 1;
+    while (lo + 1 < hi) {
+      const mid = (lo + hi) >> 1;
+      if (points[mid].s <= s) lo = mid;
+      else hi = mid;
+    }
+    a = points[lo];
+    b = points[hi];
+    segmentLength = (b.s - a.s) || 1;
   }
-
-  const a = points[lo];
-  const b = points[hi];
-  const segmentLength = (b.s - a.s + totalLength) % totalLength || 1;
   const t = (s - a.s) / segmentLength;
 
   return {

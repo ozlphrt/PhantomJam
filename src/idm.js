@@ -16,17 +16,17 @@
  */
 
 export const DEFAULT_PARAMS = {
-  v0:    30,    // desired speed m/s (~108 km/h)
-  aMax:  2.0,   // max acceleration (was 0.73) - faster jam dissolution
-  b:     3.0,   // comfortable decel (was 1.67) - sharper braking triggers jams faster
-  T:     1.0,   // safe time headway in seconds (was 1.6) - quicker driver reaction
-  s0:    2.0,   // min bumper-to-bumper gap (m)
+  v0:    28,    // desired speed m/s (~100 km/h)
+  aMax:  0.75,  // Treiber (2000) low max acceleration — amplifies stop-and-go phantom waves
+  b:     2.0,   // comfortable deceleration (m/s²)
+  T:     0.75,  // safe time headway (s) tuned for 300 vehicles across 5 lanes
+  s0:    1.5,   // min bumper-to-bumper gap (m)
   delta: 4,
-  vehicleLen:    4.5,
-  truckLen:      9.0,
-  busLen:        11.0,
-  minivanLen:    5.2,
-  motorcycleLen: 2.2,
+  vehicleLen:    4.3,
+  truckLen:      6.2,
+  busLen:        10.2,
+  minivanLen:    4.7,
+  motorcycleLen: 3.8,
 };
 
 /** IDM acceleration (Treiber 2000, Eq. 2) */
@@ -58,8 +58,8 @@ export function createVehicles(count, totalLength, params) {
     }
     positions.sort((a, b) => a - b);
 
-    // Resolve spawn overlaps using relaxation steps
-    const minSpawnGap = 12.0; // safety bumper-to-bumper buffer
+    // Resolve spawn overlaps using relaxation steps scaled to lane density
+    const minSpawnGap = Math.min(12.0, (totalLength / perLane) * 0.85);
     for (let iter = 0; iter < 10; iter++) {
       for (let i = 0; i < perLane; i++) {
         const nextIdx = (i + 1) % perLane;
@@ -119,12 +119,12 @@ export function createVehicles(count, totalLength, params) {
     }
   }
 
-  // One hard-brake seed per lane, staggered so waves appear at different times
+  // One hard-brake seed per lane, staggered so phantom waves form and propagate cleanly
   for (let lane = 0; lane < NUM_LANES; lane++) {
     const inLane = vehicles.filter(c => c.lane === lane);
     if (inLane.length > 2) {
       const seed = inLane[Math.floor(inLane.length / 2)]; // middle car
-      seed.perturbTimer = 4.0 + lane * 3.0; // fires at t=4s, 7s, 10s, 13s, 16s
+      seed.perturbTimer = 3.0 + lane * 1.5; // fires early to nucleate stop-and-go waves
     }
   }
 
@@ -157,12 +157,13 @@ export function stepVehicles(vehicles, params, road, dt) {
     byLane[l].sort((a, b) => a.s - b.s);
   }
 
-  // 1.5 Safe, Reason-based Lane Changing logic
+  // 1.5 Conservative Lane Changing (rare & strict so phantom jam queues do not dissolve)
   for (const ego of vehicles) {
     if (ego.visualLane === undefined) ego.visualLane = ego.lane;
 
-    // Check lane change with higher frequency when slow (up to 35% when stuck in traffic)
-    const checkRate = ego.v < 5.0 ? 0.35 : 0.15;
+    // Only allow occasional lane changes before a car is locked in a braking queue
+    if (ego.v < 4.0 || ego.a < -0.25) continue;
+    const checkRate = 0.008 * Math.min(1.0, dt / 0.05);
     if (Math.random() > checkRate) continue;
 
     const currentLane = ego.lane;
@@ -174,11 +175,8 @@ export function stepVehicles(vehicles, params, road, dt) {
     let currentGap = currentLeader.s - ego.s - (ego.length / 2) - (currentLeader.length / 2);
     if (currentGap < 0) currentGap += totalLength;
 
-    // REASON FOR LANE CHANGE: Ego is approaching congestion (speed drop OR leader is slow and close)
-    const approachingCongestion = (ego.v < params.v0 * ego.noiseV0 * 0.8) || 
-      (currentGap < 45.0 && currentLeader.v < params.v0 * currentLeader.noiseV0 * 0.7);
-
-    // If not approaching congestion, driver stays in their lane (no random lane-drifting)
+    const approachingCongestion =
+      currentGap < 35.0 && currentLeader.v < ego.v - 3.0;
     if (!approachingCongestion) continue;
 
     const candidates = [];
@@ -194,21 +192,20 @@ export function stepVehicles(vehicles, params, road, dt) {
 
       for (const other of laneVehicles) {
         let gap = other.s - ego.s;
-        if (gap < 0) gap += totalLength; // other is ahead of ego
+        if (gap < 0) gap += totalLength;
         if (gap < minLeaderGap) {
           minLeaderGap = gap;
           targetLeader = other;
         }
 
         let followGap = ego.s - other.s;
-        if (followGap < 0) followGap += totalLength; // other is behind ego
+        if (followGap < 0) followGap += totalLength;
         if (followGap < minFollowerGap) {
           minFollowerGap = followGap;
           targetFollower = other;
         }
       }
 
-      // Safety checks: ensure there is enough gap to target leader and follower
       let leadGap = minLeaderGap;
       let followGap = minFollowerGap;
 
@@ -219,29 +216,16 @@ export function stepVehicles(vehicles, params, road, dt) {
         followGap = minFollowerGap - (targetFollower.length / 2) - (ego.length / 2);
       }
 
-      // Squeeze into tighter gaps at low speeds (dynamic driver tailgating margin)
-      const minSafeLeadGap = 2.0 + ego.v * 0.08;
-      const minSafeFollowGap = 3.0 + (targetFollower ? targetFollower.v : 0) * 0.10;
+      // Require generous clearance so lane changes never disrupt jam wave formation
+      if (leadGap < 25.0 || followGap < 18.0) continue;
 
-      if (leadGap < minSafeLeadGap || followGap < minSafeFollowGap) continue;
-
-      if (targetFollower) {
-        const relativeFollowSpeed = targetFollower.v - ego.v;
-        if (relativeFollowSpeed > 0 && (followGap / relativeFollowSpeed) < 1.0) continue;
-      }
-
-      // Is the target lane better?
-      let targetLaneBetter = false;
-      if (!targetLeader) {
-        targetLaneBetter = true; // empty target lane is always better
-      } else {
-        // Reduced gap advantage (3.0m instead of 8.0m) and lower speed advantage (0.5m/s instead of 1.5m/s)
-        targetLaneBetter = (leadGap > currentGap + 3.0) && (targetLeader.v > currentLeader.v + 0.5);
-      }
+      const targetLaneBetter =
+        !targetLeader ||
+        (leadGap > currentGap + 12.0 && targetLeader.v > currentLeader.v + 4.0);
 
       if (targetLaneBetter) {
         ego.lane = targetLane;
-        break; // Lane changed successfully
+        break;
       }
     }
   }
@@ -278,13 +262,12 @@ export function stepVehicles(vehicles, params, road, dt) {
     }
   }
 
-  // 4. Perturbation events
+  // 4. Perturbation events (hard brake for 2.4s to bring seed vehicle to a full stop)
   for (const car of vehicles) {
     if (car.perturbTimer > 0) {
       car.perturbTimer -= dt;
-      // Active braking window: from timer value 1.2 down to 0
-      if (car.perturbTimer <= 1.2) {
-        nextA[car.id] = -7.0; // hard emergency brake (was -5.0) — creates a sharp shockwave instantly
+      if (car.perturbTimer <= 2.4) {
+        nextA[car.id] = -8.0;
       }
     }
   }
@@ -294,7 +277,7 @@ export function stepVehicles(vehicles, params, road, dt) {
     if (car.visualLane === undefined) car.visualLane = car.lane;
     car.visualLane += (car.lane - car.visualLane) * (dt * 2.5); // smooth visual shift
     car.a = nextA[car.id];
-    car.braking = car.a < -0.3;
+    car.braking = car.a < -0.3 || car.v < 1.5;
     car.v = Math.max(0, car.v + car.a * dt);
     car.s = (car.s + car.v * dt + totalLength) % totalLength;
   }

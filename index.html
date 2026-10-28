@@ -16,6 +16,34 @@
       <main id="main">
         <div id="simulation-area">
           <canvas id="road-canvas"></canvas>
+          <div id="fps-hud" class="fps-hud">
+            <span id="fps-dot" class="fps-dot"></span>
+            <span id="fps-hud-val">--</span>
+            <span class="fps-hud-unit">FPS</span>
+          </div>
+
+          <div id="jam-callout" class="jam-callout" style="opacity: 0;">
+            <div class="jam-callout-header">
+              <span class="jam-pulse-dot"></span>
+              <span class="jam-callout-title">CONGESTION CENTER</span>
+              <span id="jam-severity" class="jam-severity">HEAVY</span>
+            </div>
+            <div class="jam-callout-stats">
+              <div class="jam-stat">
+                <span class="jam-stat-label">Queued</span>
+                <span id="jam-stat-cars" class="jam-stat-val">0 cars</span>
+              </div>
+              <div class="jam-stat">
+                <span class="jam-stat-label">Core Speed</span>
+                <span id="jam-stat-speed" class="jam-stat-val">0.0 m/s</span>
+              </div>
+              <div class="jam-stat">
+                <span class="jam-stat-label">Wave Length</span>
+                <span id="jam-stat-len" class="jam-stat-val">0 m</span>
+              </div>
+            </div>
+            <div class="jam-callout-pointer"></div>
+          </div>
         </div>
 
         <button id="sidebar-trigger" class="btn-sidebar-trigger" style="opacity: 1; pointer-events: auto;">
@@ -60,8 +88,8 @@
             <h2>Parameters</h2>
 
             <div class="control-group">
-              <label for="ctrl-count">Vehicle count <span class="val-display" id="disp-count">150</span></label>
-              <input type="range" id="ctrl-count" min="20" max="400" value="150" step="1" />
+              <label for="ctrl-count">Vehicle count <span class="val-display" id="disp-count">300</span></label>
+              <input type="range" id="ctrl-count" min="20" max="400" value="300" step="1" />
             </div>
 
             <div class="control-group">
